@@ -1,0 +1,481 @@
+---
+title: "Session 6: Regression with spatial autocorrelation effects"
+author: "Paul Harris and Lex Comber"
+date: "December 2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+\tableofcontents
+
+## Overview
+
+This session covers the following topics on linear regression modelling with spatial data:
+
++ Ordinary Least Squares (OLS) estimation
++ EDA for evidence of residual spatial autocorrelation
++ Restricted Maximum Likelihood (REML) for unbiased estimation with spatial autocorrelation effects
++ The effects of predictor variable selection on regression fits
++ The influence of 'spatial-type' predictor variables on regression fits
+
+In particular, this session concerns the consequences of incorporating or not incorporating **spatially autocorrelation effects** when regression modelling. Ignoring clear evidence of residual spatial autocorrelation violates a core assumption of the classic OLS regression analysis: that of independent and identically distributed errors that following a Normal distribution with zero mean and constant variance.
+
+All regressions in this session assume fixed relationships across the study area, yielding (constant) **fixed coefficient** estimates. For (non-constant) **varying coefficient** models, see Session 7, where coefficients can be mapped and where these **spatial heterogeneity effects** are considered through a Geographically Weighted Regression (GWR) framework.
+
+The exercises in this session use the Liudaogou watershed soils data again, specifically both the point and the polygon format layers that were created in Session 2. To recap, the data set includes: response variables; soil total nitrogen percentage (TNPC), soil total phosphorus percentage (TPPC), and predictor variables; soil organic carbon (SOCgkg), nitrate nitrogen (NO3Ngkg), ammonium (NH4Ngkg), percentage clay (ClayPC), silt (SiltPC), sand (SandPC) content, vegetation coverage (CoveragePC), Slope, Aspect, Altitude_m, SoilType, LandUse and Position.
+
+Again, a number of different packages will be used, most of which should already be installed (if not install, them):
+
+```{r message=F, warning=F}
+library(tmap)
+library(sf)
+library(spdep)
+library(dplyr)
+library(car)
+library(mosaic)
+library(gstat)
+library(nlme)
+```
+
+Once again, remember to:
+
+1. Create a seperate folder for this Session
+1. Always write your code into an R script... **always**!
+1. Save the script to the folder
+1. Set the working directory to the folder location
+
+Having done that you should clear your workspace, create and load the 4 soils data files from Sessions 1 and 2. Note you will probably need to copy these over to the directory you are working from for this session:
+
+```{r message=F}
+# clear the workspace
+rm(list = ls())
+# load the data 
+load("soils.RData")
+load("df_sf.RData")
+load("df_zone.RData")
+load("boundary.RData")
+```
+
+Again, it is useful to be able to work in both `sp` and `sf` formats:
+
+```{r cache = T}
+# convert to sp format
+df_sp = as(df_sf, "Spatial")
+zone_sp = as(df_zone, "Spatial")
+```
+
+It is also useful to add the coordinates (from our R object called `data`) to our spatial data sets, to use as extra predictor variables, if required:
+
+```{r}
+df_sf$Longitude <- data$Longitude
+df_sp@data$Longitude <- data$Longitude
+
+df_sf$Latitude <- data$Latitude
+df_sp@data$Latitude <- data$Latitude
+```
+
+## Preliminary EDA
+
+Before moving to the regression analyses, it is worth noting that a preliminary EDA (not conducted here) should include an assessment of: (a) each variable's distribution characteristics and transform if necessary (as in part, addressed below), (b) the correlation matrix for the continuous variables and (c) conditional boxplots for the response's relationship to any categorical or ordinal variable. All 3 forms of EDA should also include the detection of outliers that may compromise subsequent regression fits. Robust (outlier-resistant) regressions are not considered here.
+
+Also, as the data are spatial, then inspecting the maps of all variables is strongly recommended.
+
+In session 3, when illustrating the MAUP - TNPC, SOCgkg, NO3Ngkg and NH4Ngkg were all transformed using natural logs and ClayPC was square root transformed. In this session, we will similarly transform, except for ClayPC. Given Clay / Silt / Sand are compositional in form, ClayPC is simply dropped from all regression analyses to avoid instabilities.
+
+Thus, conducting transforms on the soils data, similar to that done in Wang et al (2009) and Comber et al (2018):
+
+```{r}
+df_sf$TNPC <- log(df_sf$TNPC+0.0001)
+df_sf$SOCgkg <- log(df_sf$SOCgkg)
+df_sf$NO3Ngkg <- log(abs(df_sf$NO3Ngkg))
+df_sf$NH4Ngkg <- log(df_sf$NH4Ngkg)
+
+df_sp@data$TNPC <- log(df_sp@data$TNPC+0.0001)
+df_sp@data$SOCgkg <- log(df_sp@data$SOCgkg)
+df_sp@data$NO3Ngkg <- log(abs(df_sp@data$NO3Ngkg))
+df_sp@data$NH4Ngkg <- log(df_sp@data$NH4Ngkg)
+```
+
+## 1. Standard OLS regression analysis
+
+In this first sub-section, we will fit an OLS estimated linear regression and interrogate its fit in terms of: (i) R-squared, (ii) predictor variable significance, and (iii) evidence of collinearity amongst its predictors through variance inflation factors (VIFs).
+
+For illustration, we will fit the following OLS regression, where soil Total Nitrogen (`TNPC`) is a function of 5 predictor variables (soil organic carbon `SOCgkg`, nitrate nitrogen `NO3Ngkg`, ammonium `NH4Ngkg`, silt `SiltPC` and sand `SandPC`):
+
+```{r}
+mod.OLS.1 = lm(TNPC ~SOCgkg+SandPC+SiltPC+NO3Ngkg+NH4Ngkg, data = df_sf)
+```
+
+The OLS regression can be inspected in the usual way:
+
+```{r}
+summary(mod.OLS.1)
+```
+
+Thus the R-squared = 0.61, which indicates a reasonable fit. All coefficients except that for SandPC are significantly different from zero at least at the 90% level.  Observe that the significance tests assume *independent and identically distributed errors* - thus are potentially compromised from the outset.
+
+To assess for predictor variable collinearity (i.e. when predictor variables are highly correlated and thus each relay very similar information to the response), we can use VIFs:
+
+```{r}
+vif(mod.OLS.1)
+```
+
+Following guidelines given in Belsley et al. (1980) and O’Brien, (2007) predictors with a VIF > 10 should be removed and the regression re-fitted. This avoids inaccurate coefficient estimation and associated uncertainties due to such collinearities. An alternative to improve statistical inferences in the presence of collinearity can be found in a penalised regression (e.g. Zou and Hastie 2005), where all predictors can potentially be retained, but this approach was not considered here.
+
+Thus re-fitting the OLS regression, where soil Total Nitrogen `TNPC` is now a function of 4 predictor variables (`SOCgkg`, `NO3Ngkg`, `NH4Ngkg` and `SiltPC`) - i.e. `SandPC` is removed (as it was one of two predictors with VIFs > 40):
+
+```{r}
+mod.OLS.2 = lm(TNPC ~SOCgkg+SiltPC+NO3Ngkg+NH4Ngkg, data = df_sf)
+```
+
+And its summary:
+
+```{r}
+summary(mod.OLS.2)
+```
+
+And the VIFs:
+
+```{r}
+vif(mod.OLS.2)
+```
+
+All VIFs are now < 2, which is good and the R-squared = 0.61, which is no different to that found before. All coefficients are now significantly different from zero at least at the 95% level. Again, observe that these significance tests assume *independent and identically distributed errors* - this has not changed.
+
+Many studies may stop their statistical analyses at this juncture, but this overlooks possibly important spatial effects. So the first step to address this, is to examine the residuals from the OLS fit.
+
+## 2. Investigation of the residuals
+
+Therefore, in this sub-section, we will interrogate the residuals from the chosen OLS fit through: (i) mapping them, (ii) assessing their spatial autocorrelation with a Moran's I analysis, and (iii) assessing their spatial autocorrelation with a semivariogram analysis.
+
+### 2.1 Mapping the residuals
+
+The residuals from the chosen OLS can be summarised:
+
+```{r}
+summary(mod.OLS.2$residuals)
+var(mod.OLS.2$residuals) # the variance
+```
+
+Again, we can use the following code from Session 3 for mapping the residuals:
+
+```{r,tidy=FALSE}
+quick.map <- function(spdf,var,legend.title,main.title, dot.size = 0.2) {
+  if (class(spdf) == "SpatialPointsDataFrame"){
+  p = tm_shape(spdf)+
+      tm_dots(var, title = legend.title, size = dot.size)+
+      tm_layout(title = main.title, legend.title.size =0.9)
+  }
+  if (class(spdf) == "SpatialPolygonsDataFrame"){
+  p = tm_shape(spdf)+
+      tm_fill(var, title = legend.title)+
+      tm_layout(title = main.title, legend.title.size =0.9)
+  }
+  return(p)
+}
+```
+
+So adding the *raw* residuals to our spatial data sets:
+
+```{r}
+
+df_sf$residuals <- mod.OLS.2$residuals
+df_sp@data$residuals <- mod.OLS.2$residuals
+```
+
+And mapping them in Figure 1:
+
+```{r, fig.cap = "Residuals from OLS regression fit.", warning=F, message=F}
+quick.map(df_sp,var="residuals","Raw","OLS residuals")
+```
+
+There exists some unusually high negative and some unusually high positive residuals, both of which suggest outlying observations which should be investigated further (but not here!). There does not appear to be any obvious spatial pattern to the residuals.
+
+### 2.2 Moran's I test
+
+Therefore, lets us assess for residual spatial autocorrelation and assess the significance of it using a Moran's I test based on the zonal data form as done in session 3. However this time, we must use the `lm.morantest` as looking at residuals from a linear regression. We cannot use the `morantest` directly on the residuals as this would result in a known bias. This is due to an inherent identification problem when separating *first- from second-order effects* when regression modelling with spatial data (e.g. Armstrong 1984). 
+
+```{r}
+# create the neighbour list
+# note the need to convert the polygons to sp format for poly2nb
+gnb = poly2nb(as(df_zone, "Spatial")) # see Session 3
+glw = nb2listw(gnb) # see Session 3
+moran.result <- lm.morantest(mod.OLS.2, listw=glw)
+moran.result
+```
+
+The outputs indicate there is significant residual autocorrelation as the p-value <<<< 0.
+
+### 2.3 Residual Semivariograms
+
+To provide detail and clarity to this significance in autocorrelation, a residual semivariogram can be found. However, given the same identification problem above, this semivariogram will also be biased, but it does serve for exploratory purposes, just as it did in Session 4 when kriging with a trend model. The residual semivariogram (Figure 2) is found from:
+
+```{r}
+Res.vgm = variogram(TNPC ~SOCgkg+SiltPC+NO3Ngkg+NH4Ngkg, df_sf, cutoff=1200)
+Res.vgm.fit = fit.variogram(Res.vgm, model = vgm(0.3, "Exp", 100, 0.005),
+                            fit.sills = c(F,T), fit.method=7)
+Res.vgm.fit
+```
+
+```{r, fig.cap = "Empirical residual semivariogram with Exponential model fit"}
+plot(Res.vgm,Res.vgm.fit,main='Residual semivariograms')
+```
+
+The (biased) residual semivariogram, fitted via a weighted least squares (WLS) method, yields: an  *effective correlation range* of 3 x 40.7 = 122.1 m, which is relatively weak considering the study has a maximum distance of 3742 m; a *nugget variance* of 0.005 (user-specified and not estimated, in this case); and a *structural variance* of 0.30. Furthermore, the *nugget effect* is relatively strong at 0.005/(0.005 + 0.30) = 0.016.
+
+Overall, experience suggests that spatial autocorrelation in the residuals is not particularly strong even though the Moran's I test is significant. 
+
+The maximum distance between data points / zones in the study area can be found from:
+
+```{r}
+max(dist(st_coordinates(df_sf)))
+```
+
+## 3. REML regression analysis
+
+Given the results of the residual analyses, above, we will now fit a REML estimated linear regression with spatial effects and compare its outputs to a regression without spatial effects in terms of: (i) model fit, and (ii) predictor variable significance.
+
+To fit REML estimated linear regressions, we can use the `lme` function in the `nlme` (linear mixed model) package as follows:
+
+First, fit a *regression without spatial effects* (which should be the same as the OLS regression, above):
+
+```{r}
+df_sf$dummy <- rep(1, nrow(df_sf)) # as we don't have grouping data (e.g a 'treatment')
+mod.REML.2.NS <- lme(fixed = TNPC ~SOCgkg+SiltPC+NO3Ngkg+NH4Ngkg,
+                     data = df_sf, random = ~ 1 | dummy, method = "REML")
+```
+
+The REML regression outputs can be inspected and compared with OLS estimation (look at the estimated coefficients etc.):
+
+```{r}
+summary(mod.REML.2.NS)
+```
+
+```{r}
+summary(mod.OLS.2)
+```
+
+Good news! Estimation with the `lme` function matches that of the `lm` function - both essentially OLS fits.
+
+Second, fit a *regression with spatial effects* - this will take a few minutes (note using the `update` function):
+
+```{r cache = T}
+mod.REML.2.S <- update(mod.REML.2.NS, correlation = corExp(c(122.1,0.016),
+                      form = ~ Longitude+Latitude, nugget = T), method = "REML")
+```
+
+Observe that the semivariogram parameters `corExp(c(122.1,0.016)` are again only *initialising parameters* for the REML fit. These are taken from our exploratory (but biased) residual semivariogram (modelled with WLS), above. Note also, that we now specify the *effective correlation range* for the exponential variogram model with the `nlme` package.
+
+The REML regression outputs can be inspected using:
+
+```{r}
+summary(mod.REML.2.S)
+```
+
+If you inspect the summaries for `mod.REML.2.NS` (non-spatial) and `mod.REML.2.S` (spatial), there is little gained in incorporating spatial effects with respect to the estimated coefficients and the associated relationship inferences. This is not surprising given the (moderate) outcomes of the residual variography, above.
+
+Note also the semivariogram parameter estimates via the REML fit - i.e. a *effective correlation range* of 264.6 m and a *nugget effect* of 0.75 - are both quite different to the biased WLS variogram model fit.
+
+It is also useful to compare models by their fit statistics (AIC - Akaike Information Criterion and BIC - Bayesian Information Criterion) with values of: (1155 and 1186) and (1112 and 1153) for (`mod.REML.2.NS` and `mod.REML.2.S`), respectively. Thus in terms of model fit, the spatial model can be preferred as both AIC and BIC values are 'significantly' reduced.
+
+Observe that the `lm` function does not report the AIC value or that the `lme` function does not report the R-squared value. An R-squared can be calculated as follows, for the spatial model:
+
+```{r}
+preds <- mod.REML.2.S$fitted[,1]
+actual <- df_sf$TNPC
+rss <- sum((preds - actual) ^ 2)  ## residual sum of squares
+tss <- sum((actual - mean(actual)) ^ 2)  ## total sum of squares
+rsq <- 1 - rss/tss
+rsq
+```
+
+The spatial model's R-squared = 0.60. As usual, this is little different to the non-spatial model's R-squared (of 0.61).
+
+In summary, accounting for spatial effects in the soils process is important in terms of model fit (e.g. AIC), but not so important in terms of inference with respect to the significance of the soils data relationships. In the next sub-sections, we shall see situations when this is not the case.
+
+**Task**: create an R function for calculating R-squared and confirm that all R-squared values are correctly found for the following regressions: `mod.OLS.2`, `mod.REML.2.NS` and `mod.REML.2.S`. For an answer, see the last section.
+
+## 4. Effects of predictor variable choice
+
+In this sub-section, we will conduct a brief model specification exercise in terms of the effects of removing predictor variables on the OLS and REML model fits. Here, spatial autocorrelation tends to become more prominent as predictor information is reduced.
+
+### 4.1 Regression fits with associated diagnostics
+
+Thus re-fitting all regressions, where soil Total Nitrogen (TNPC) is now a function of NH4Ngkg only:
+
+The OLS fit:
+
+```{r}
+mod.OLS.3.MS = lm(TNPC ~NH4Ngkg, data = df_sf)
+```
+
+Conduct Moran's I test:
+
+```{r}
+lm.morantest(mod.OLS.3.MS, listw=glw)
+```
+
+Find the residual semivariograms (Figure 3):
+
+```{r}
+Res.vgm.MS = variogram(TNPC ~NH4Ngkg, df_sf, cutoff=1200)
+Res.vgm.fit.MS = fit.variogram(Res.vgm.MS, model = vgm(0.4, "Exp", 200, 0.3),
+                               fit.sills = c(T,T), fit.method=7)
+Res.vgm.fit.MS
+```
+
+```{r, fig.cap = "Empirical residual semivariogram with Exponential model fit (w.r.t. model specification)"}
+plot(Res.vgm.MS,Res.vgm.fit.MS,main='Residual semivariograms (w.r.t. model specification)')
+```
+
+Fit the (non-spatial) REML:
+
+```{r}
+mod.REML.3.NS.MS <- lme(fixed = TNPC ~NH4Ngkg,
+                        data = df_sf, random = ~ 1 | dummy, method = "REML")
+```
+
+Fit the (spatial) REML:
+
+```{r cache = T}
+mod.REML.3.S.MS <- update(mod.REML.3.NS.MS, correlation = corExp(c(831,0.28),
+                          form = ~ Longitude+Latitude, nugget = T), method = "REML")
+```
+
+Investigate the summary of the non-spatial model:
+
+```{r}
+summary(mod.REML.3.NS.MS)
+```
+
+Investigate the summary of the spatial model:
+
+```{r}
+summary(mod.REML.3.S.MS)
+```
+
+### 4.2 Interpretation
+
+Inspecting the coefficient summaries for `mod.REML.3.NS.MS` (non-spatial) and `mod.REML.3.S.MS` (spatial), there are clear differences in the coefficient estimates and t-values. Intercept and NH4Ngkg coefficient significance *appears* much stronger if spatial autocorrelation is not considered.
+
+It is again useful to compare models by their AIC / BIC with values of: 1722 / 1740 and 1540 / 1567 for `mod.REML.3.NS.MS` and `mod.REML.3.S.MS`, respectively. Thus in terms of model fit, the spatial model can be preferred as both AIC and BIC values are 'significantly' reduced.
+
+Observe also the difference in the structure for the residual variograms in Figure 2 and Figure 3, where the latter (the one for this sub-section) has a much longer correlation range.
+
+Thus in summary, the objective here was to demonstrate that as the number of predictor variables decrease, it is common for the value of incorporating spatial effects to increase (and vice-versa until the model is considered fully-specified).
+
+
+## 5. Effects of the 'spatial-type' predictors
+
+In this sub-section, the aim is to demonstrate how inherently 'spatial' predictor variables (e.g. in Longitude and Latitude) can act as a surrogate spatial effect in an OLS regression, while their significance is reduced when spatial effects are introduced through a REML.
+
+### 5.1 Regression fits with associated diagnostics
+
+Therefore, re-fitting all regressions, where soil Total Nitrogen (TNPC) is now a function of NH4Ngkg, Longitude and Latitude:
+
+The OLS fit:
+
+```{r}
+mod.OLS.4.SP = lm(TNPC ~NH4Ngkg + Longitude + Latitude, data = df_sf)
+```
+
+Conduct Moran's I test:
+
+```{r}
+lm.morantest(mod.OLS.4.SP, listw=glw)
+```
+
+Fit and plot the residual semivariograms (Figure 4):
+
+```{r}
+Res.vgm.SP = variogram(TNPC ~NH4Ngkg + Longitude + Latitude, df_sf, cutoff=1200)
+Res.vgm.fit.SP = fit.variogram(Res.vgm.SP, model = vgm(0.4, "Exp", 200, 0.3),
+                               fit.sills = c(T,T), fit.method=7)
+Res.vgm.fit.SP
+```
+
+```{r, fig.cap = "Empirical residual semivariogram with Exponential model fit (w.r.t. spatial predictors)"}
+plot(Res.vgm.SP,Res.vgm.fit.SP,main='Residual semivariograms (w.r.t. spatial predictors)')
+```
+
+Fit the (non-spatial) REML:
+
+```{r}
+mod.REML.4.NS.SP <- lme(fixed = TNPC ~NH4Ngkg + Longitude + Latitude,
+                        data = df_sf, random = ~ 1 | dummy, method = "REML")
+```
+
+Fit the (spatial) REML:
+
+```{r cache = T}
+mod.REML.4.S.SP <- update(mod.REML.4.NS.SP, correlation = corExp(c(733,0.27),
+                          form = ~ Longitude+Latitude, nugget = T), method = "REML")
+```
+
+Investigate the summary of the non-spatial model:
+
+```{r}
+summary(mod.REML.4.NS.SP)
+```
+
+Investigate the summary of the spatial model:
+
+```{r}
+summary(mod.REML.4.S.SP)
+```
+
+### 5.2 Interpretation
+
+Inspecting the coefficient summaries for `mod.REML.4.NS.SP` (non-spatial) and `mod.REML.4.S.SP` (spatial), there are clear differences in the p-values and thus the significance of each predictor variable. Both Longitude and Latitude are *significant* predictors in the OLS regression but are both *insignificant* in the REML regression. Furthermore, the intercept is only significant in the OLS regression.
+
+It is again useful to compare models by their fit statistics (AIC and BIC) with values of: (1707 and 1734) and (1574 and 1610) for (`mod.REML.4.NS.SP` and `mod.REML.4.S.SP`), respectively. Thus in terms of model fit, the spatial model can be preferred as both AIC and BIC values are 'significantly' reduced.
+
+This analysis clearly demonstrates how 'spatial-type' predictor variables (e.g. in Longitude and Latitude) can act as a surrogate spatial effect in an OLS regression, while their significance is reduced when spatial effects are introduced through a REML.
+
+This observation also demonstrates the importance of accounting for spatial effects for processes that are inherently spatial, else incorrect scientific inferences can result.
+
+**Task**: does Altitude_m have a similar effect on the interpretation of the OLS and REML fits?
+
+## Summary
+
+In this session, we have taken you through a series of OLS and REML regressions for modelling with or with spatial autocorrelation effects. Clearly these effects can sometimes, but not always, be important - commonly depending on the nature and amount of the available predictor variables.
+
+You may also have observed the similarities between REML regression and kriging with an external drift (KED) from Session 4. This is not surprising as they are one and the same model - the former estimates the model parameters / coefficients, the latter uses this model to predict at an un-sampled locations (see Cressie 1992).
+
+## Tasks
+
+Try repeating the above exercises with `TPPC` instead of `TNPC` as the response variable. Suggest trying this with `TPPC` square-root transformed.
+
+## Answer to the R-squared task
+
+create an R function for calculating R-squared:
+
+```{r}
+RSQR <- function(x,y){
+rss <- sum((x - y) ^ 2)  ## residual sum of squares
+tss <- sum((y - mean(y)) ^ 2)  ## total sum of squares
+rsq <- 1 - rss/tss
+rsq}
+RSQR(mod.REML.2.S$fitted[,1],df_sf$TNPC)
+```
+
+## References
+
+Armstrong, M., 1984. Problems with universal kriging. *Mathematical Geology*, 16(1), pp.101-108.
+
+David, B., Kuh, E. and Welsch, R., 1980. *Regression diagnostics: identifying influential data and sources of collinearity*. John Wiley & Sons.
+
+Comber, A., Wang, Y., Lu, Y., Zhang, X. and Harris, P., 2018. Hyper-local geographically weighted regression: extending GWR through local model selection and local bandwidth optimization. *Journal of Spatial Information Science*, 2018(17), pp.63-84.
+
+Cressie, N., 1992. Statistics for spatial data. Wiley, New Jersey.
+
+O’Brien, R.M., 2007. A caution regarding rules of thumb for variance inflation factors. *Quality & Quantity*, 41(5), pp.673-690.
+
+Wang, Y., Zhang, X. and Huang, C., 2009. Spatial variability of soil total nitrogen and soil total phosphorus under different land uses in a small watershed on the Loess Plateau, China. *Geoderma*, 150(1-2), pp.141-149.
+
+Zou, H. and Hastie, T., 2005. Regularization and variable selection via the elastic net. *Journal of the Royal Statistical Society: B (statistical methodology)*, 67(2), pp.301-320.
+
+

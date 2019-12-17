@@ -1,0 +1,1160 @@
+---
+title: "Session 2: Exploratory Data Analysis (EDA) and Mapping"
+author: "Lex Comber and Paul Harris"
+date: "November 2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+\tableofcontents
+
+## Overview
+
+This session covers the following topics:
+
++ Manipulating data and spatial data (single data tables, joining data tables, piping with `dplyr`)
++ Exploratory Data Analysis (EDA) of non-spatial properties
++ Spatial EDA: mapping with the `tmap` package
+
+The exercises in this session use the Liudaogou watershed data again. 
+
+A number of different packages will be used in this session, some of which are new and may need to be installed (e.g. `reshape2`, `deldir`). Again the code below will check whether they are installed on your machine and if they are not will install them and their dependencies (other packages that are needed):  
+```{r eval = F}
+if (!is.element("sf", installed.packages()))
+    install.packages("sf", dep = T)
+if (!is.element("tmap", installed.packages()))
+    install.packages("tmap", dep = T)
+if (!is.element("reshape2", installed.packages()))
+    install.packages("reshape2", dep = T)
+if (!is.element("RColorBrewer", installed.packages()))
+    install.packages("RColorBrewer", dep = T)
+if (!is.element("deldir", installed.packages()))
+    install.packages("deldir", dep = T)
+if (!is.element("tidyverse", installed.packages()))
+    install.packages("tidyverse", dep = T)
+```
+
+You should then load the packages into your R session:
+```{r message=F, warning=F}
+library(sf)
+library(tmap)
+library(reshape2)
+library(RColorBrewer)
+library(deldir)
+library(tidyverse)
+library(gclus)
+```
+
+Once again, remember to:
+
+1. Create a seperate folder for this Session
+1. Always write your code into an R script... **always**!
+1. Save the script to the folder
+1. Set the working directory to the folder location
+
+## 1. Manipulating data and spatial data with `dplyr`
+
+The first part of this session introduces methods for manipulating data using functions from the `dplyr` packages that is part of the `tidyverse`. Specifically it focuses on: 
+
++ operations for manipulating single data tables (selecting, filtering, mutating etc) 
++ joining data and spatial data 
+
+The manipulations are undertaken using a piping syntax which essentially allows data manipulations and operations to be put into a chain or flow. This syntax can be used with spatial data and non-spatial data in the same way.
+
+### 1.1 Introduction
+
+Clear your workspace, load the soils data from the Liudaogou watershed and convert it to an `sf` object using the `.RData` file and the code from Session 1 below. **Note** I suggest that you set up a seperate folder for each session (e.g. Rworkshop > Session 1) which means that the `soils.RData` object will need to be copied to the folder for this session.
+
+```{r}
+rm(list = ls())
+load("soils.RData")
+df_sf <- st_as_sf(data, 
+                  coords = c("Longitude", "Latitude"), 
+                  crs = 4793)
+```
+
+
+**Note:** you should save this to your local directory for future use. The code below does this:
+```{r}
+save(df_sf, file="df_sf.RData")
+```
+
+The code below creates a map of the Liudaogou sample locations that are positioned in a gully and on abandoned land using the piping syntax as in Figure 1:  
+```{r eval = F}
+# set the mode to interactive viewing
+tmap_mode("view")
+df_sf %>% 
+  filter(Position == "Gully" & LandUse == "Abandoned land") %>% 
+  qtm(dots.col = "black", scale = 1, basemaps = c('Esri.WorldTopoMap'))
+# reset the mode
+ttm()
+```
+```{r echo = F, fig.cap="Locations of observaitions that both in Gully and on Abandoned land."}
+library(png)
+library(grid)
+img <- readPNG("Rplot.png")
+grid.raster(img)
+```
+
+This is the first time you have seen piping syntax. The pipe is denoted by `%>%` and it pushes the output of one operation into the input of another. 
+
+So in the above the first line pushes `df_sf` to the second line, which in this case filters the observations according to some logical criteria, and then pushes the result to `qtm`, which takes the output of the pipe as its first argument. If you examine the help for `qtm` you will see that the first argument is `shp` taking an `sf` or `sp` class.
+
+So the pipe passes the filtered data to `qtm`. **NOTE** you can examine the output of the filtering by entering `df_sf %>% filter(Position == "Gully" & LandUse == "Abandoned land")`, and all that is needed are the additional `qtm` parameters. 
+
+Piping is also efficient as no intermediate R objects are created  (such as the intermediate results from the filtering), and only the final output (data, map, etc) is returned to the console, and therefore the computer memory.
+
+One final point is that when using the piping syntax, the idea is to read the functions from left to right, rather than nesting operations and reading from the inside (right) to the outside (left).
+
+This starts to suggest how piping and some of the syntax for data table manipulation can be used for data analytics and that the following are important considerations:  
+
+- the logical flow of operations in relation to the functions
+- which data manipulations, summaries, selection and other wrangling are needed *before* extracting the results
+
+The `dplyr` packages supports a piping syntax and provides a a suite of tools for manipulating and summarising data held in data tables. 
+
+### 1.2 Single table manipulations in `dplyr`
+
+The `dplyr` tools or *verbs* (the package developers call them verbs because they *do* something!) can be used to manipulate single data tables. The important ones are summarised in Table 1. 
+
+```{r tab23, echo = F, warning=F, message=F}
+Verb = c("filter()", "slice()", "arrange()", "desc()", "select()", "distinct()", "mutate()", "transmute()", "summarise()", "sample_n()", "sample_frac()") 
+Description = c("Selects a subset of rows in a data frame according to user defined conditional statements", "Selects a subset of rows in a data frame by their position (row number)", "Reorders the row order according to the columns specified (by 1st, 2nd and then 3rd column etc)", "Orders a column in descending order", "Selects the subset of specified columns and reorders them", "Finds unique values in a table", "Creates and adds new columns based on operations applied to existing columns e.g. NewCol = Col1 + Col2", "As select but only retains the new variables", "Summarises values with functions that are passed to it", "Takes a random sample of table rows", "Selects a fixed fraction of rows") 
+df <- data.frame(Verb, Description)
+library(knitr)
+library(kableExtra)
+kable (df, booktabs = TRUE,
+              caption = 'The single-table verbs for manipulating data in `dplyr`.') %>%
+  kable_styling(full_width = F) %>% column_spec(2, width = "12cm") 
+```
+
+The `dplyr` verbs can be used to undertake a number of different operations on the data to subset and fold it different ways. We have already used `filter` used to select records that fulfill some kind of logical criteria. The code below selects records on Shrubland and creates a new variable called `AltLogCover` describing a vegetation coverage / altitude index for each filtered observation. The `select` function returns the named variables (i.e. data columns) to show the variation of this new variable with Total Nitrogen percentage. Notice also how the final data table is passed to `ggplot` for visualisation. The results are shown in Figure 2, with any observations that have null values removed.
+
+```{r eval = T, fig.cap="A `ggplot` scatterplot of AltLocCover (height * the log of % coverage) with TNPC (total nitrogen percentage)."}
+df_sf %>% 
+  filter(LandUse == "Shrubland") %>% 
+  mutate(AltLogCover = Altitude_m*(log(CoveragePC ))) %>% 
+  select(AltLogCover, TNPC) %>%
+  ggplot(aes(x = AltLogCover, y = TNPC)) +
+    geom_point()  + 
+    geom_smooth(method = "lm", col = "red", span = 0.15)
+```
+
+You should unpick this: each line of code without the pipe sign (`%>%`) can be run to see what it is doing. So for example, try examining the following sequence of code snippets:
+
+```{r eval = F}
+df_sf %>% 
+  filter(LandUse%in%c("Shrubland")) 
+```
+Then...
+```{r eval = F}
+df_sf %>% 
+  filter(LandUse%in%c("Shrubland")) %>% 
+  mutate(AltLogCover = Altitude_m*(log(CoveragePC ))) 
+```
+And finally...
+```{r eval = F}
+df_sf %>% 
+  filter(LandUse%in%c("Shrubland")) %>% 
+  mutate(AltLogCover = Altitude_m*(log(CoveragePC ))) %>% 
+  select(AltLogCover, TNPC, LandUse)
+```
+
+Note also, how the result is piped directly into the `ggplot` code snippets.  We will examine the `ggplot2` package in more detail later in this session.
+
+It is also possible to use the `summarise` function along with `group_by` to generate group summaries. The code generates a mean of the `TNPC` variable over land use groups, generates an ordered table and assigns this to `tmp`.Notice how this is done at the end of the pipe and not the start: 
+
+```{r eval = F}
+df_sf %>% 
+  st_drop_geometry() %>%
+  group_by(LandUse) %>%
+  summarise(Mean_N = mean(TNPC)) %>%  
+  ungroup() %>%
+  arrange(desc(Mean_N)) -> tmp
+tmp
+```
+
+The grouping can be expanded to include more than one group as in the code below: 
+
+```{r eval = F}
+df_sf %>% 
+  st_drop_geometry() %>%
+  group_by(LandUse, SoilType) %>%
+  summarise(Mean_N = mean(TNPC)) %>%  
+  ungroup() %>%
+  mutate(LU_Soil = paste0(LandUse, "/", SoilType)) %>%
+  dplyr::select(LU_Soil, Mean_N) %>% 
+  arrange(desc(Mean_N)) -> tmp
+tmp
+```
+
+You should unpick (run) the individual lines of code. Notice the use of the `st_drop_geometry()` function to extract the data frame from the `sf` object. As before the results can be plotted using `ggplot`, in this case to generate an ordered lollipop plot as in Figure 3, and without assigning anything to `tmp`:
+
+```{r dplyr3, fig.cap="A lollipop chart of mean TNPC (total nitrogen percentage) for combinations of land use and soil type."}
+df_sf %>% 
+  st_drop_geometry() %>%
+  group_by(LandUse, SoilType) %>%
+  summarise(Mean_N = mean(TNPC)) %>%  
+  ungroup() %>%
+  mutate(LU_Soil = paste0(LandUse, "/", SoilType)) %>%
+  select(LU_Soil, Mean_N) %>% 
+  arrange(desc(Mean_N))%>% 
+  ggplot(aes(x=Mean_N, y=fct_reorder(LU_Soil, Mean_N), label=round(Mean_N,2))) + 
+  geom_point(stat='identity', fill="black", size=3)  +
+  geom_segment(aes(y = LU_Soil, 
+                   x = 0, 
+                   yend = LU_Soil, 
+                   xend = Mean_N), 
+               color = "black") +
+  labs(y = "Ordered Land Use / Soil Type", x = "Mean N %") +
+  theme(axis.text=element_text(size=7))
+```
+
+You will find that your use of the `dplyr` functions for manipulating tables will grow in complexity the more you use them, and especially if used in conjunction with the piping syntax. 
+
+As **Homework** or when you return to this Session after the workshop you should explore the the introductory vignette to `dplyr` which describes the single table verbs in `dplyr` :
+
+```{r eval = F}
+vignette("dplyr", package = "dplyr")
+```
+
+#### Tasks: single table `dplyr` verbs 
+
+Write some code that does the following:
+
+1. Summarises median total Phosphorus percentage (`TPPC`) for different soil types, in ascending order. 
+
+```{r echo = F, eval = F}
+df_sf %>% 
+  st_drop_geometry() %>%
+  group_by(SoilType) %>%
+  summarise(Mean_P = median(TPPC)) %>%  
+  ungroup() %>%
+  arrange(Mean_P) 
+```
+
+2. Selects observations (records) with a very high Sand percentage (i.e. greater than 75%) and calculates the mean soil ammonium (NH4Ngkg) for different land use types.
+
+```{r echo= F, eval = F}
+df_sf %>% 
+  st_drop_geometry() %>%
+  filter(SandPC>75) %>%
+  group_by(LandUse) %>%
+  summarise(Mean_NH4N = mean(NH4Ngkg)) %>%
+  ungroup()
+```
+
+3. Creates a variable of the ratio of total soil nitrogen percentage (`TNPC`) to total soil Phosphorous percentage (`TPPC`), calculates the mean value of this ratio over different land use types and presents the results in descending order. 
+
+```{r echo = F, eval = F}
+df_sf %>% 
+  st_drop_geometry() %>%
+  mutate(NP_ratio = TNPC/TPPC) %>%
+  group_by(LandUse) %>%
+  summarise(Mean_NP = mean(NP_ratio)) %>%
+  arrange(desc(Mean_NP))
+```
+
+The answers to the tasks are at the end of this document.
+
+### 1.3 Two table manipulations in `dplyr`
+
+Tables can be joined through an attribute that they have in common. To demonstrate the soils data is split up and ~99% of the records are randomly selected to form 2 data tables to join: 
+
+```{r}
+set.seed(1234)
+df_sf %>% st_drop_geometry() %>%
+  select(ID, TNPC, TPPC, SOCgkg, ClayPC, SiltPC, SandPC, NO3Ngkg) %>%
+  sample_frac(0.99) -> df1
+df_sf %>% st_drop_geometry() %>%
+  select(ID, SoilType, LandUse, Position) %>%
+  sample_frac(0.995) -> df2
+```
+
+You should examine `df_sf1` and `df_sf2` in the usual way. 
+```{r eval = F}
+dim(df1)
+summary(df1)
+dim(df2)
+summary(df2)
+```
+
+You will note that they have different numbers of records and that they have the `ID` variable in common and this variable is automatically picked up as the common variable by the `dplyr` join functions. For example, the code below returns the records for the 680 IDs that `df1` and `df2` have in common:
+```{r eval = T, message=F, warning=F, results="hide"}
+df1 %>% inner_join(df2) %>% as_tibble() 
+```
+
+It is important to note that links between 2 tables can be defined in different ways. The different join types available in `dplyr` are summarised in table 2.
+
+```{r tab24, echo = F}
+join.1 <- c("inner_join()", "left_join()", "right_join()", "full_join()", "semi_join()", "anti_join()")
+
+join.2 <- c("returns all of the records from `x` with matching values in `y`, and all fields from both `x` and `y`. If there are multiple matches between `x` and `y`, all combination of the matches are returned.", 
+"returns all of the records from `x`, and all of the fields from `x` and `y`. Any records in `x` with no match in `y` will be given `NA` values in the new fields. If there are multiple matches between `x` and `y`, all combination of the matches are returned.",  
+"returns all of the records in `y`, and all of the fields in `x` and `y`. Records in `y` with no match in `x` are given `NA` values in the new fields. If there are multiple matches between `x` and `y`, all combination of the matches are returned.",
+"returns all records and fields from both `x` and `y`. `NA` is allocated to any non-matching values.",
+"returns all records from `x` where there are matching values in `y`, keeping just the fields from `x`. It never duplicates records as does an inner join.", 
+"returns all the records from `x` where there are non-matching values in `y`, keeping just fields from x.")
+join.3 <- c("mutating","mutating","mutating","mutating","filtering","filtering")
+df.k <- data.frame(Join = join.1, Description = join.2, Type = join.3)
+#kable (df.k, booktabs = F,
+#       caption = 'The different types of join in the `dplyr` package.', format = "html")
+kable (df.k, booktabs = F,
+       caption = 'The different types of join in the `dplyr` package.') %>%
+  kable_styling(full_width = F) %>% column_spec(2, width  = "10cm") 
+rm(list = c("join.1", "join.2", "join.3", "df.k"))
+```
+
+There are 6 join types included in the `dplyr` package - four of which are called *mutating* joins and two *filtering* joins. Mutating joins combine variables from both the `x` and `y` inputs and filtering joins only keep records from the `x` input. They have a similar syntax (do not run this code - it is showing the syntax): 
+```{r eval = F}
+result <- join(x, y)
+```
+
+It is instructive to see how they work with the `df1` and `df2` data tables:
+```{r}
+df1 %>% inner_join(df2) %>% head()
+```
+
+Note also that the piping takes the `x` argument in the join from the data that is piped to it and the `y` from the data table that is specified in the join. The 2 lines of code below are equivalent: 
+```{r}
+df1 %>% inner_join(df2) %>% dim()
+inner_join(df1, df2) %>% dim()
+```
+
+The different join types can return different results. The code snippets below illustrate this using the `dim()` and `head()` functions:
+```{r eval = F}
+df1 %>% inner_join(df2) %>% dim()
+df1 %>% left_join(df2) %>% dim()
+df1 %>% right_join(df2) %>% dim()
+df1 %>% left_join(df2) %>% dim()
+df1 %>% semi_join(df2) %>% dim()
+df1 %>% anti_join(df2) %>% dim()
+```
+
+You should compare the results when `x` and `y` are changed, especially for left and right joins. Also examine the results by substituting `head()` for `dim()` in the code above as below
+```{r eval = F}
+# left
+df1 %>% left_join(df2) %>% dim()
+df2 %>% left_join(df1) %>% dim()
+# right
+df1 %>% right_join(df2) %>% dim()
+df2 %>% right_join(df1) %>% dim()
+```
+
+The help section for `dplyr` joins has some other worked examples that you can copy and paste into your console and then run them:
+```{r eval = F}
+?inner_join
+```
+
+As further **Homework** or when you return to this Session after the workshop you should explore the the vignette for `dplyr` joins. 
+```{r eval = F}
+vignette("two-table", package = "dplyr")
+```
+
+### 1.4 Summary
+
+This section has introduced the piping syntax of `dplyr`. This has many advantages in data analysis, not least of which is the ability to chain sequences of commands together without the need to create intermediary variables between different steps in the analysis. 
+
+We have introduced and applied some of `dplyr` tools for manipulating single data tables and for linking (joining) different data tables based on some common attribute.  Of course once the data are joined, it can be subjected to single table manipulations. 
+
+As an additional **Task** you should write some code that joins `df1` and `df2` that returns only the observations they have in common, and summarises mean soil organic carbon (`SOCgkg`) for different landscape positions. Again the solution to this is at the end of this document.
+
+## 2. Exploratory Data Analysis 
+
+Exploratory Data Analysis (EDA) is a critical part of any data analysis. It underpins the choice and development of methods and approaches of analysis, including which variables to retain and sometimes, which scale(s) to operate at. This section covers the following:
+
++ An introduction to the `ggplot2` package
++ EDA of individual variables
++ Multivariate EDA
++ Writing graphics, plots and figures to files (e.g. PNG, PDF, TIFF, etc) 
+
+The aim of EDA is to understand data properties and data structure. Such activities support the development of analysis in the following typical situations: 
+
+1. Hypothesis development - you are searching through possible research questions and / or you want to confirm the approach you are taking.
+1. Analysis - you are undertaking your analysis to test your hypothesis and you want confirmation that the analysis is heading in the right direction. 
+1. Communication - you have moved through the data and the problem, identified the problem or trend you are interested in and want to share the results with others.
+
+Through EDA, it is possible to explore data properties (distributions, data spread, central tendencies, etc) and dataset structure (how different variables interact with each other) and a number of visual and numeric tools are available. Some of the numeric approaches have been illustrated. 
+
+R contains many functions for examining data properties: 
+```{r eval = F}
+# summary
+summary(st_drop_geometry(df_sf[, 2:14]))
+# mean
+mean(df_sf$TNPC)
+# standard deviation
+sd(df_sf$TNPC)
+# variance
+var(df_sf$TNPC)
+# inter-quartile range
+IQR(df_sf$TNPC)
+```
+These can be called for individually names variables as above. However, they can also be piped, usually along with some other operation (grouping in this case). The code below summarises the mean and standard deviation of soil nitrogen percentage overall and then does for different land use classes:
+
+```{r eval = F}
+# overall
+df_sf %>% 
+  st_drop_geometry() %>%
+  summarise(meanTNPC = mean(TNPC), sdTNPC = sd(TNPC)) 
+# grouped by land use  
+df_sf %>% 
+  st_drop_geometry() %>%
+  group_by(LandUse) %>%
+  summarise(Count = n(), Mean_N = mean(TNPC), SD_N = sd(TNPC)) %>%  
+  ungroup() %>%
+  arrange(desc(Mean_N))
+```
+
+It is also possible to examine correlations and covariances - we need to extract the data frame for df_sf to do this:
+```{r}
+# extract data.frame
+df = data.frame(st_drop_geometry(df_sf[, 2:11]))
+# correlation
+round(cor(df[, c(1, 3:9)]), 3)
+# covariance
+round(cov(df[, c(1, 3:9)]), 3)
+```
+
+The significance of these correlations can be tested (note Pearson's product moment correlation coefficient is the default):
+```{r}
+cor.test(~TNPC+SOCgkg, data = df)
+```
+This shows that the correlation is highly significant (very low p-value) and also gives a 95% confidence interval of the correlation.
+
+An alternative format is below:
+```{r eval = F}
+cor.test(df$TNPC, df$SOCgkg)
+```
+
+### 2.2 EDA with `ggplot2`
+
+Visual approaches are very useful for examining single variables and for examining the interactions of variables together. Common visualizations include histograms, frequency curves and bar charts, scatterplots, etc, some which have been already introduced in this and earlier sessions. 
+The `ggplot2` package has many options as well as the type of visual summary. It allows multiple simultaneous visualizations, supports grouping by colour, shape and facets and the precise choice of the many options requires some careful thinking. Does the data need to be sorted or faceted? Should transparency and / or groups be used etc? 
+
+Earlier in this session some of the functions for plotting from the `ggplot2` package were used to visualise data (a scatter plot of `TNPC` and an index of vegetation coverage / altitude (`AltLogCover`) for Shrubland land use. The `ggplot2` package is installed with the `tidyverse` package. R has several systems for making visual outputs such as graphs, but `ggplot2` is one of the most elegant and most versatile. It implements the __grammar of graphics__ (Wilkinson, 2012), a coherent system for describing and building graphs. If you'd like to learn more about the theoretical underpinnings of `ggplot2`, "The Layered Grammar of Graphics" (Wickham, 2010) is recommended.
+
+This sub-section provides a more comprehensive treatment of `ggplot2` but it is impossible to describe *all* of the different parameters and visualization options that are available. For this reason, the aims here are to establish some skills in visualisation. 
+
+#### Basics
+The `ggplot2` package provides a coherent system for describing and building graphs, implementing  the __grammar of graphics__ The basic idea is that graphs are composed of different layers each of which can be controlled. 
+
+The basic syntax is (do not run this code): 
+```{r eval = F}
+# specify ggplot with some mapping aesthetics
+ggplot(data = <data>, mapping = <aes>)+
+  geom_<function>()
+```
+In this syntax first `ggplot` is called, a dataset is specified and some mapping aesthetics are defined. Together, these tell `ggplot` which variables are to be plotted (for example on the $x$ and $y$ axes), which variables are to be grouped and coloured. Finally, the plot type is specified such as `geom_point()`, `geom_line()` etc. `ggplot` has a default set of plot and background colours, line types and sizes for points, line width, text etc, all of which can be overwritten. 
+
+These basics are probably best described through illustration. The code below generates a scatterplot of nitrogen against phosphorous from the `df_sf` data, with a transparency term (`alpha`). The scatterplot is assigned to `p`:
+
+```{r eval = F}
+p = ggplot(data = df_sf, aes(x = TNPC, y = TPPC))+
+  geom_point(alpha = 0.2)
+```
+
+`p` can be called to generate the plot:
+```{r eval = F}
+p
+```
+or further graphical elements can be added as layers. The example below fits a trend line:
+```{r eval = F}
+p + geom_smooth(method = "lm")
+```
+
+The ordering and location of information passed to the different elements in the plot is important. The code below will return an error because the call to `ggplot()` specifies the data but does not set any global mapping parameters. The result is that geom_smooth() does not know what to map:
+
+```{r eval = F}
+ggplot(df_sf)+
+  geom_point(aes(x = TNPC, y = TPPC))+
+  geom_smooth(method = "lm")
+```
+
+This could be corrected by locally setting the mapping parameters within `geom_smooth()` 
+```{r eval = F}
+ggplot(df_sf)+
+  geom_point(aes(x = TNPC, y = TPPC))+
+  geom_smooth(aes(x = TNPC, y = TPPC), method = "lm")
+```
+but it is more efficient to do this globally as was originally done.
+```{r eval = F}
+ggplot(data = df_sf, aes(x = TNPC, y = TPPC))+
+  geom_point(alpha = 0.2)+
+  geom_smooth(method = "lm")
+```
+
+Layer specific parameters can be set such as colour, shape, transparency, size, thickness etc depending on the graphic, changing the default style. The `ggplot2` package specifies a number of pre-defined styles, called by `theme_X()`, that can be added as a layer. The code below applies `theme_minimal()` and sets the axis limits as in Figure 4. Note you will get a warning informing you that 4 records have been omitted from the plot because of the imposed axis limits.
+
+```{r eval = T, warning=F, message=F, fig.cap="A scatterplot of TNPC (total nitrogen percentage) and TPPC (total phosphorous percentage)."}
+ggplot(data = df_sf, aes(x = TNPC, y = TPPC))+
+  # specify point characteristics
+  geom_point(alpha = 0.6, size = 0.7, colour = "#FB6A4A", shape = 1)+
+  geom_smooth(method = "lm", colour = "#DE2D26")+
+  ylim(c(0, 0.75))+
+  xlim(c(0, 1.25))+
+  theme_minimal() 
+```
+
+You should explore other `ggplot` themes which are listed if you enter `?theme_bw` at the console.
+
+A final consideration is the use of faceting (this is described in more detail later): The code below generates seperate scatterplots for each land use type as in Figure 5.
+
+```{r eval = T, warning=F, message=F, fig.cap="A faceted scatterplot of TNPC (total nitrogen percentage) and TPPC (total phosphorous percentage)."}
+ggplot(data = df_sf, aes(x = TNPC, y = TPPC))+
+  # specify point characteristics
+  geom_point(alpha = 0.6, size = 0.7, colour = "#FB6A4A", shape = 1)+
+  geom_smooth(method = "lm", colour = "#DE2D26")+
+  ylim(c(0, 0.75))+
+  xlim(c(0, 1.25))+
+  facet_wrap(~LandUse)+
+  theme_minimal() 
+```
+
+#### Groups
+
+Groups can be defined in a number of different ways with `ggplot`. These  might be different treatments, classes or other discrete categories within the data. These are specified within the mapping aesthetics using parameters like size, colour, shape, etc. Note that you now get the warning described above (i.e. due to the imposed axis limits) this time.
+```{r eval = F}
+ggplot(data = df_sf, aes(x = TNPC, y = TPPC, colour = SoilType))+
+  geom_point(alpha = 0.5) +
+  ylim(c(0, 0.75))+
+  xlim(c(0, 1.25))
+```
+
+Try changing the grouping in the code above from `colour` to `size` and `shape` to see what it effect they have.
+
+It also possible to directly control elements of the plot using the `theme` function. Some of this has been demonstrated in graphics earlier. But for the moment examine the effects of the code below on the previous graphic:
+```{r eval= F}
+ggplot(data = df_sf, aes(x = TNPC, y = TPPC, colour = SoilType))+
+  geom_point(alpha = 0.5) +
+  ylim(c(0, 0.75))+
+  xlim(c(0, 1.25))+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1,hjust = 1), 
+        axis.title = element_blank())
+```
+
+In summary, control of every element in the graphic is possible with `ggplot2`. It is impossible to describe or illustrate every possible option for exercising control, which is why `ggplot2` has books dedicated to it. However, as you have worked through these exercises and continue to do so you should gather a library of different ways of controlling plots. 
+
+### 2.3 EDA of Single variables
+
+Starting with the simplest case, the distribution of a single continuous variable can be visualised using a histogram or a boxplot:
+
+```{r eval = F}
+ggplot(df_sf, aes(TPPC)) +
+  geom_histogram(bins = 30, col = "red")
+```
+
+A probability density function can be applied as in Figure 6 using the code below:
+
+```{r eval=TRUE, echo=T, fig.cap="A density histogram with a probabaility density function."}
+ggplot(df_sf, aes(TPPC)) +
+  geom_histogram(aes(y=..density..),bins = 30, fill="indianred", col="white")+
+  geom_density(alpha=.5, fill="#FF6666")
+```
+
+The line `geom_histogram(aes(y=..density..)...` rescales the histogram counts so that bar areas integrate to 1, but is otherwise the same as the standard `ggplot2` histogram. The `geom_density()` function adds  a density curve to the plot with a transparency term (`alpha=.5`). Try: 
+
+i) commenting out the middle line of the code above to see this on its own
+ii) adjusting the colours in the plot (in built R colours can be listed by entering `colours()` at the console, and colours used in the individual `RColorBrewer` palettes can be listed - see below), and 
+iii) changing the variable being examined. 
+
+```{r eval = F}
+display.brewer.all()
+brewer.pal(11, "Spectral")
+brewer.pal(9, "Reds")
+``` 
+
+Recall that each use of `ggplot` requires a set of aesthetic mappings to be used and that these are  specified using the `aes` argument. They can be globally specified when `ggplot` is used to *initialize* the plot or when the particular layer of the plot is called. The code below generates the same histogram plot as the above, but this time with all of the mapping aesthetics specified for each plot layer individually:
+```{r eval = F}
+ggplot() +
+  geom_histogram(data = df_sf, aes(x = TPPC, y=..density..),
+                 bins = 30, fill="indianred", col="white")+
+  geom_density(data = df_sf, aes(x = TPPC), alpha=.5, fill="#FF6666")
+```
+
+This *layered* approach to `ggplot` operations means that different variables can be passed to different layers. The code below shows `SandPC` along with `SiltPC`: 
+```{r eval = F}
+ggplot(data = df_sf) +
+  geom_histogram(aes(x = SandPC, y=..density..),
+                 bins = 30, fill="indianred", col="white")+
+  geom_density(aes(x = SiltPC), alpha=.5, fill="#FF6666")+
+  xlab("SandPC (bins) with SiltPC (curve)")
+```
+
+The density plots can be further extended to compare the density plots of different groups, show how different levels of `silt are associated with different land use classes:
+```{r eval = F}
+ggplot(df_sf, aes(SiltPC, stat(count), fill = LandUse)) +
+  geom_density(position = "fill") +
+  scale_colour_brewer(palette = "Set1")
+```
+The `stat(count)` returns the density by number of points and other options include `density`, `scaled` and `ndensity`. Notice the use of the `scale_colour_brewer`. This is one of a number of different colour scales with the specific naming relating to their use.  
+
+It is also possible to combine a series of individual histograms, but this requires the data to be re-organised into long (as opposed to wide format). The `df_sf` data table is not particularly wide, with `r nrow(df_sf)` rows (records) and `r ncol(df_sf)` columns (fields).
+
+It can be *melted* into long format using the `melt` function in the `reshape2` package. The code below does this. You should note that the `LandUse` classification is retained and the use of the `st_drop_geometry` function to get rid of the geometry that is always reported in any `sf` object. Also, the ` melt` function always reports what is being used as the ID variable. This will make sense when you inspect the output:
+```{r eval = F}
+dim(df_sf)
+melted = melt(st_drop_geometry(df_sf[,c(2,5:9, 16)]))
+dim(melted)
+head(melted)
+tail(melted)
+```
+```{r echo = F, warning=F, message=F}
+melted = melt(st_drop_geometry(df_sf[,c(2,5:9, 16)]))
+```
+The data now has 2 new fields: `variable` which holds the name of the variable column from `df_sf` and `value` which has the numeric value of the attribute for that observation, for that variable. 
+
+This *melted* long data can now be passed to `ggplot` to generate multiple single plots using the `facet_wrap` function as in Figure 7:
+
+```{r ch5fig2, eval=TRUE, echo=T, results='hide',message=FALSE, fig.cap="Histogram of different variables in the `df_sf` data."}
+ggplot(melted, aes(x = value)) +
+  geom_histogram(fill="firebrick3", bins = 30, col = "white") +
+    facet_wrap( ~ variable, ncol = 3, scales = "free")
+```
+
+Notice the parameters that are passed to `facet_wrap`. They define the variable in `melted` that is to be *faceted*, the number columns and whether the scales for the plots are to be fixed or not (i.e. `free`). The first argument of `facet_wrap()` should be a formula, which you create with `~` followed by a variable name (here "formula" is the name of a data structure in R, not a synonym for "equation"). The variable that you pass to `facet_wrap()` should be discrete, i.e. categorical. 
+
+The analysis can be modified to consider groups, this time switching to boxplots. The first set of examples uses the wide `sdf_sf` data , removing the legend and getting rid of the default `ggplot2` colour scheme:
+```{r eval = F}
+df_sf  %>% ggplot(aes(y=SandPC,fill = LandUse)) + 
+  facet_wrap(~LandUse, ncol = 2) + 
+  coord_flip() + 
+  geom_boxplot() + 
+  theme(legend.position = "none") +
+  scale_fill_manual(name = "Land use class", values = brewer.pal(8, "Spectral"))
+```
+
+**Task:** Try modifying the code above by changing it to `fill = Position` and commenting out the line containing `theme(legend.position = "none")`. This shows how these values varies within and between different groupings. This shows the interaction of different categories. We will return to examinations of group interactions in the next section.
+
+These examples illustrate how additional variables, particularly categorical variables, can be used to split the plot into __facets__, or subplots that each display one subset of the data. 
+
+This can be further refined by __ordering__ the land use classes by their median `CoveragePC` values and plotting them, using a number of other plot parameters as in Figure 8:
+```{r eval=TRUE, echo=T, results='hide',message=FALSE, fig.cap="Histogram of `CoveragePC ` (percentage vegetation coverage) against land use classes, ordered by the class median value."}
+df_sf  %>% 
+  ggplot(aes(x = reorder(LandUse, CoveragePC, FUN = median), 
+             y=CoveragePC, fill = LandUse)) + 
+  coord_flip() + 
+  geom_boxplot(aes(group = LandUse),outlier.alpha=0.4, outlier.colour="darkred") +
+  scale_fill_manual(name = "Land use class", values = brewer.pal(8, "Spectral"))+
+  xlab("")+
+  ylab("Median coverage %")+
+  theme_minimal()+
+  theme(legend.position = "none")
+```
+
+Now there is quite a lot going on in the code above. It is instructive to unpick some of it. You should note (and play around with!) the specification of the `fill` aesthetics that tells `ggplot` which variables are to be shaded, the treatment of outliers, specifying their transparency and shading, the over-riding of the default `ggplot2` palette with `scale_fill_manual`. The `coord_flip()` function transposes the $x$ and $y$ axes and their legends. Finally, one of the `ggplot` *themes* was applied. This has a layout that includes a legend, meaning that a line of code to remove the legend has to be specified *after* the theme call if that is what is wanted.
+
+### 2.4 EDA of Multiple variables
+
+Session 1 introduced correlation plots.
+
+It is possible to grouping these correlations so clusters of postentially important variables can be examined.
+
+This is possible in `ggplot` using the `geom_tile` function along with the `order.single` function from `gclus` which sorts the data so that similar relationship pairs are adjacent. The code below does the following: 
+
+1. extracts the variables that are numeric
+2. generates a correlation matrix
+3. orders the matrix by correlation similarity such that high correlations are near to the diagonal
+4. melts the result 
+5. uses the `geom_tile` function  
+
+The code below generates Figure 9. There is a lot going on in the code but the comments should help you navigate through it. Notice the use of `scale_fill_gradient`. This is used to specify the shading and breaks that are passed to the item being *filled*, in this case the `value` variable in `melted`, specifying two colours from the `RColorBrewer` reds and blues palettes rather than the default `ggplot` treatment of red and blue. Also, `geom_text` prints the values of `value` to each tile, showing the actual correlation numerically. 
+
+```{r ch5fig4, eval=TRUE, echo=T, results='hide',message=FALSE, fig.cap="Pearson correlation plot of numeric variables, ordered correlation similarity."}
+library(gclus)
+## 1. create an index to extract the numeric variables from df_sf
+## but retaim the IDs
+index = which(as.vector(unlist(sapply(df_sf, class))) == "numeric")
+df = st_drop_geometry(df_sf[,c( index)]) 
+## 2. construct the correlation matrix
+cor.mat <- round(cor(df),3)
+## 3. order the correlation matrix (using order.single from gclus)
+cor.mat = cor.mat[order.single(cor.mat), order.single(cor.mat)]
+## 4. melt the correlation matrix
+melted <- melt(cor.mat)
+## checks (uncomment the below to see)
+# cor.mat
+# head(melted)
+## 5. then construct the main ggplot with geom_tile
+ggplot(melted, aes(Var2, Var1, fill = value))+
+  geom_tile(color = "white")+
+  scale_fill_gradient2(low = "#CB181D", high = "#2171B5", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", name="Correlation") +
+  theme_minimal()+ 
+  # make sure x and y have the same scaling
+  coord_fixed()+
+  # add the values to the tiles (using Var2, Var1 as the coordinates) 
+  geom_text(aes(Var2, Var1, label = value), color = "black", size = 2) +
+  # specifiy theme elements
+  theme_minimal()+
+  # adjust text direction on x-axis
+  theme(axis.text.x = element_text(angle = 45, vjust = 1,hjust = 1))+
+  # remove the axis labels
+  xlab("")+ylab("")
+```
+
+The nature of the pairwise correlations can also be visualized using scatterplots as was done earlier in Figure 4. The code below plots the `SOCgkg` and `TNPC` variables as a simple scatter plot with a trend line, removing 2 of the large outliers in the `TNPC` variables:
+```{r eval = F}
+df_sf %>% ggplot(mapping = aes(x = SOCgkg, y = TNPC)) +
+  geom_point(size = 0.5)+
+  ylim(0,2.5)
+```
+
+A final set of refinements is to include transparency terms and trend lines for each Land Use class and to change the shading. Notice how the legend now picks up the last `ggplot2` operation, in this case the `geom_line` function, and sets the legends in Figure 10: 
+```{r eval=TRUE, echo=T, results='hide',warning=F, message=FALSE, fig.cap="Per land use class scatterplots of `TNPC` and `SOCgkg` with trendlines."}
+df_sf %>% ggplot(mapping = aes(x = SOCgkg, y = TNPC, colour = LandUse)) +
+  geom_point(size = 0.5,alpha = 0.7) + 
+  ylim(0,1.5)+
+  geom_smooth(method = "lm", alpha = 0.5, size = 1)+
+  scale_colour_manual(name = "Land Use Class", values = brewer.pal(8, "Set1"))
+```
+
+An alternative is to facet the plots, as in Figure 11, such that four independent plots are produced showing the pairwise relationship between `TNPC` and `SOCgkg` as was done for the histograms earlier:
+```{r warning=F,message=F, fig.cap="Faceted scatterplots."}
+df_sf %>% ggplot(mapping = aes(x = SOCgkg, y = TNPC)) +
+  geom_point(size = 0.5,alpha = 0.7) + 
+  ylim(0,1.5)+
+  facet_wrap(~LandUse, ncol = 2) + 
+  geom_smooth(method = "lm")
+```
+
+The plots that group or facet the data allow the properties of correlations between pairs of variables to be explored as well as their interactions with different types of *treatments*.  
+
+A further way of plotting correlations is to use hexbins. These are hexagonal tiles that are shaded to represent the number of data points at that location in a scatterplot.   They provide a convenient way of summarising data. This is especially useful with very large data. Plot character size and transparency can be used as above to aid visualisation. Binning provides another route. There are a number of options: `geom_bin2d`, `geom_hex` and `geom_density2d` - try using each of these in turn in the 2nd line of the code below to generate alternative versions of Figure 12 (note you may have to install the `nexbin` package: `install.packages("hexbin", dep = T)`).
+
+```{r ch5fig6, eval=TRUE, echo=T, results='hide',warning=F,message=FALSE, fig.cap="Hex bin plots of `SOCgkg` and `TNPC` variables."}
+df_sf %>% ggplot(mapping = aes(x = SOCgkg, y = TNPC)) +
+  geom_hex() + 
+  ylim(c(0,2.5))+
+  #coord_fixed()+
+  labs(fill='Count')+
+  scale_fill_gradient(low = "lightgoldenrod1", high = "black")
+```
+
+The bin shadings provide a convenient way of representing the density of data points with a similar value. Of course different elements of faceting, ordering, binning and grouping can be combined as in Figure 13:
+
+```{r eval=TRUE, echo=T, fig.width = 10,results='hide',warning=F,message=FALSE, fig.cap="Hex bin plots of `SOCgkg` and `TNPC` variables by land use class."}
+df_sf %>% ggplot(mapping = aes(x = SOCgkg, y = TNPC)) +
+  geom_hex(bins=15) + 
+  facet_wrap(~Position, ncol = 3)+
+  ylim(c(0,2.5))+
+  labs(fill='Count')+
+  scale_fill_gradient(low = "lemonchiffon", high = "darkblue")
+```
+
+All the approaches until now have examined graphics showing pair-wise relations. It it sometimes useful to examine multiple variables together. However on a 2D plot the options for including a 3rd and 4th variables are limited: size, shade / colour, transparency, possibly plot shape. The plot below attempts to do this with some of the variables but it is a bit of a mess, as in Figure 14! 
+
+```{r fig.cap="An attempt to plot 5 variables together."}
+df_sf %>% 
+  ggplot(mapping = aes(x = SOCgkg, y = TNPC, 
+                       colour = SiltPC, 
+                       size = NO3Ngkg, 
+                       alpha = NH4Ngkg))+ 
+  geom_point()+
+  ylim(0,2.5)+
+  scale_colour_gradient(low = "white", high = brewer.pal(5, "Reds")[5])
+```
+
+A final set of consideration for examining multiple variables simultaneously is through the use of _radar_ plots. 
+
+What these seek to do is to comparatively show the properties (attributes) of different groups or classes of variables in the data alongside each other, in order to determine visually whether specific groups have different general properties.
+
+Radar plots with an aggregate function can be used to generate and display summaries (means in this case) of each variable for different groups, such as the land use classes. The results need to melted to a data frame before being passed to `ggplot`:
+```{r}
+df_sf %>% st_drop_geometry() %>% 
+  select("TNPC", "TPPC", "SOCgkg", "ClayPC", "SiltPC", "SandPC",
+         "NO3Ngkg", "NH4Ngkg", "N2P", "Altitude_m") %>%
+  sapply(scale) %>% 
+  aggregate(by = list(df_sf$LandUse), FUN=mean) %>%
+  melt(id.vars= "Group.1", 
+               variable.name = "Var",
+               value.name ="Value") -> agg_melted
+```
+
+You may wish to examine the outputs. The melted data can be passed to `ggplot` and used to construct polar or radar plots showing the typical (mean) values of the different land use classes for each of the numeric variables, as in Figure 15.
+
+```{r fig.width = 10, fig.cap="Radar plots of the variable mean values for each land use class."}
+ggplot(data=agg_melted,  aes(x=factor(Var), y=Value, 
+                            group= Group.1, colour=Group.1, fill=Group.1)) + 
+  geom_point(size=2) + 
+  geom_polygon(size = 1, alpha= 0.2) + 
+  #ylim(-2.0, 2.0) + ggtitle("Radar")  + 
+  scale_x_discrete() +
+  theme_light()+
+  facet_wrap(~Group.1, ncol = 4)+
+  scale_color_manual(values= brewer.pal(8, "Set1"))+
+  scale_fill_manual(values= brewer.pal(8, "Set1"))+
+  coord_polar()+
+  theme(legend.position = "none", 
+        axis.title = element_blank(),
+        axis.text = element_text(size = 6))
+```
+
+In the above code the data were rescaled to show the variables on the same polar axis. Rescaling can be done in a number of ways and there are many functions to do it. Here the `scale` function applies a classic standardised approach around mean of 0 with a standard deviation of 1 - i.e. a ***z-score***. Others use variable minimum and maximum to linearly scale between 0 and 1 (such as the `rescale` function in the `scales` package). The polar plots in the figure show that there are some large differences between land use classes in most of the variables, although how evident this is will depend on the method of rescaling (trying changing `rescale` with `scale` in the code above and change mean to median). 
+
+### 2.5 Writing figures to file
+
+Figures, plots, graphs, maps etc can be written out to a file for use in a document or report. There are a whole host of formats that graphics *can* be written out but usually we want PDFs, JPEGs, TIFFs or PNGs.
+
+The code below creates and writes a figure in 3 different formats. You will have to experiment with the different ways that the size and density (e.g. dots per inch, dpi) can be adjusted, which of course affect the plot display (text size etc).
+
+This is very short sections that simply introduces 3 methods for writing maps out to PDF, PNG and TIFF files.
+
+There are a number of functions that do this:
+```{r eval = F}
+pdf()
+png()
+tiff()
+```
+Examine the help for these.
+
+The key thing  you need to know is that these functions all *open* a file. The open file needs to be closed using `dev.off()` after the map or the figure has been written to it. So the basic syntax is (do not run this code - it is just showing syntax) :
+```{r eval = F}
+pdf(file = "MyPlot.pdf", other settings)
+<code to produce figure or map>
+dev.off()
+```
+
+You should try to write out a `.png` file of the map using the code below. This writes a `.png` file to the current working directory, which can always be changed: 
+```{r eval = F, echo=T}
+# open the file
+png(filename = "Figure1.png", w = 7, h = 5, units = "in", res = 300)
+# make the figure
+df_sf %>% ggplot(mapping = aes(x = SOCgkg, y = TNPC)) +
+  geom_hex() + 
+  ylim(c(0,2.5))+
+  #coord_fixed()+
+  labs(fill='Count')+
+  scale_fill_gradient(low = "lightgoldenrod1", high = "black")
+# close the png file
+dev.off()
+```
+
+### 2.6 Summary
+
+EDA is a critical component of any data analysis and any spatial data analysis. Visualizing data is one of the easiest ways to do this and of course further refinement would be possible with some tests of significance (for example of the differences between groups). 
+
+The `ggplot2` package is amazing. It is a bit of learning curve (i.e. difficult at first) especially with the piping syntax but it is quick and easily modifiable and can be wrapped into figure-making functions easily.
+
+There are some excellent texts on data visualization more generally and specifically using R. It would be impossible to list them all and indeed many of them have some kind of on-line or bookdown version that are free to use. Various R specific texts provide insight into specific packages, such as Wickham (2016) as well as more general guidance about how to use different visualization techniques: 
+
+- ggplot2: Elegant Graphics for Data Analysis (Wickham, 2016) 
+- R Graphics Cookbook: Practical Recipes for Visualizing Data (Chang 2018) 
+- Data Visualization: a Practical Introduction (Healy, 2018) 
+- Data Visualization with R https://rkabacoff.github.io/datavis/
+
+It is impossible to capture the full dynamics of this information environment: new web-pages, blogs, tutorials etc appear constantly. In this context the aims of this session are not provide a comprehensive treatment of `ggplot2` or all the different mapping options for spatial data. Rather, it briefly describes how to visualise the properties of data with the `ggplot2` package as this is now the R default. 
+
+## 3. Mapping and visualizing spatial properties with `tmap`
+
+### 3.1 Data preparation
+
+The code in this section will use the `df_sf` data and some derived areal data. Your should clear your workspace and load `df_sf.RData` that was created earlier in this session:
+```{r}
+rm(list = ls())
+load("df_sf.RData")
+```
+Recall that this data has a Chinese projections (EPSG 4793): it is important that the projection of the spatial data is known for some of the mapping and especially for spatial operations on the data.
+
+We will also use the boundary dataset saved in Session 1 with the `st_write` function. You should load this into this R session as well. **Note** you will have to *either* copy the shapefile you created to the folder for Session 2 *or* temporarily set the working directory to the Session 1 folder. 
+
+The code below reads the shapefile and assigns a projection to the layer: 
+
+```{r, message=F, warning=F}
+boundary = st_read("poly.shp", quiet = T) %>% `st_crs<-`(4793)
+```
+
+The `df_sf` layer is a point dataset. For the purposes of this session it will be used to generate a polygons dataset to illustrate `tmap` functionality. The code below creates a voronoi tessellation and clips it to the boundary. Each polygon has the properties of the single observation point it contains. Notice that actually this function converts the data to `sp` format and then back to `sf`, despite the existence of the `st_voronoi` function in the `sf` package which does not quite do the job we want.
+```{r warning=F, message=F}
+# Voronoi approach to define areas around points 
+# http://carsonfarmer.com/2009/09/voronoi-polygons-with-r/
+# define the function
+voronoipolygons = function(layer) {
+    if (any(class(layer) == "sf")) layer = as(layer, "Spatial")
+    crds = layer@coords
+    require(deldir)
+    z = deldir(crds[,1], crds[,2])
+    w = tile.list(z)
+    require(sp)
+    polys = vector(mode='list', length=length(w))
+    for (i in seq(along=polys)) {
+        pcrds = cbind(w[[i]]$x, w[[i]]$y)
+        pcrds = rbind(pcrds, pcrds[1,])
+        polys[[i]] = Polygons(list(Polygon(pcrds)), ID=as.character(i))
+    }
+    SP = SpatialPolygons(polys)
+    row.names=sapply(slot(SP, 'polygons'), function(x) slot(x, 'ID'))
+    voronoi = SpatialPolygonsDataFrame(SP, data=data.frame(layer, row.names=row.names))
+    proj4string(voronoi) = proj4string(layer)
+    return(st_as_sf(voronoi))
+}
+```
+
+This can be used to define voronoi areas from the `df_sf` data:
+```{r}
+df_zone <- voronoipolygons(df_sf)
+```
+
+And a quick map generated, as in Figure 16: 
+```{r fig.cap="Raw voronoi areas."}
+qtm(df_zone)
+```
+
+Obviously we need to clip the area data to the boundary. This can done through an intersection with the boundary layer, as shown in Figure 17: 
+```{r warning=F, message=F, fig.cap = "The clipped voronoi areas."} 
+df_zone = st_intersection(df_zone, boundary)
+# sf format map
+plot(st_geometry(df_zone))
+```
+
+You should save this object and the boundary layer for use in later Sessions:
+```{r}
+save(df_zone, file="df_zone.RData")
+save(boundary, file="boundary.RData")
+```
+
+### 3.2 The `tmap` package
+
+The `tmap` package was introduced in Session 1 via the calls to `qtm` or *quick tmap*. It supports the *thematic visualization* of spatial data, with a focus on the spatial distribution of spatial data attributes. It has a similar grammatical style to `ggplot2` in that it handles each element of the map separately in a series of layers. In so doing it seeks to exercise control over each element. This is different to the basic R plot functions. `tmap` has a basic syntax (again, do not run this code - its is simply showing the syntax of `tmap`):
+```{r eval = F}
+tm_shape(data = <data>)+
+  tm_<function>()
+```
+The `tm_shape` function initialises the map and then layer types and  what gets mapped are specified using different flavours of `tm_<function>` as in Table 3.
+
+```{r echo = F}
+tm_types = c("tm_dots, tm_bubbles",  "tm_lines", 
+             "tm_fill, tm_borders, tm_polygons",
+             "tm_text",
+             "tm_format, tm_facet, tm_layout", 
+             "tm_view, tm_compass, tm_credits, tm_scale_bar")
+tm_desc = c("for points either simple or sized according to a variable", "for line features", 
+            "for polygons / areas, with and without attributes and polygon outlines", 
+            "for adding text to map features",
+            "for adjusting cartographic appearance and map style, including legends",
+            "for including traditional cartography elements")
+
+df <- data.frame(Function= tm_types, Description = tm_desc)
+kable (df, booktabs = TRUE, 
+       #format = "html",
+       caption = 'Commonly used `tmap` functions') %>%
+  kable_styling(full_width = F) %>% column_spec(2, width = "8cm") 
+```
+
+
+### 3.3 `tmap` examples
+
+Lets start with a simple choropleth map. This shows the distribution of a continuous variable in different elements of the spatial data (typically polygons / areas or points). The code below maps `SandPC' as in Figure 18, and shows that there is a general trend running East-West,.  
+
+```{r warning = F, message = F, fig.cap = "A choropleth map of `SandPC`."}
+tm_shape(df_zone)+
+  tm_polygons("SandPC")
+```
+
+By default `tmap` picks a shading scheme, the class breaks and places a legend somewhere. All of these can be changed. The code below allocates the `tmap` plot to `p1` (plot 1) and then prints it:
+```{r eval = F}
+p1 = tm_shape(df_zone)+
+  tm_fill("SandPC", palette = "GnBu",
+    breaks = seq(0,100, 10), title = "% Sand")+
+  tm_layout(legend.position = c("left", "top"), legend.outside = T)
+p1
+```
+
+And of course many other elements included either by running the code snippet defining `p1` above with additional lines **or** by simply *adding* them as in the code below:
+```{r eval = F}
+p1 + tm_scale_bar(position = c("centre", "bottom")) + 
+  tm_compass(position = c(0.9, "bottom"))
+```  
+
+It is also possible to add or overlay other data such as the boundary, which because this is another spatial data layer needs to be added with `tm_shape` followed by the usual function: 
+```{r eval = F}
+p1 + tm_shape(boundary) + tm_borders(col = "black", lwd = 2)
+```  
+
+The `tmap` package can be used to plot multiple attributes in the same plot in this case sand with silt, which unsurprisingly shows an inverse distributions as in Figure 19:  
+```{r fig.cap = "Choropleth maps of `SandPC` and `SiltPC`."}
+tm_shape(df_zone)+
+  tm_fill(c("SandPC", "SiltPC"), palette = "GnBu",
+    breaks = seq(0,100, 10), title = c("% Sand", "% Silt"))+
+  tm_layout(legend.position = c("left", "top"))
+```
+
+The code below applies further refinements to the choropleth map to generate Figure 20. Notice the use of `title` and `legend.hist`, and then subsequent parameters passed to `tm_layout` to control the legend: 
+```{r warning = F, message=F, fig.cap = "A refined choropleth map of `SandPC`."}
+tm_shape(df_zone)+
+  tm_polygons("SandPC", title = "% Sand", palette = "Reds",
+    style = "kmeans", legend.hist = T)+
+  tm_layout(title = "Liudaogou \nWatershed",
+            frame = F, legend.outside = T, 
+            legend.hist.width = 1,
+            legend.format = list(digits = 1), 
+            legend.outside.position = c("left", "top"),
+            legend.text.size = 0.7,
+            legend.title.size = 1)+
+  tm_compass(position = c(0.74, "0.1"))+
+  tm_scale_bar(position = c("right", "bottom")) +
+  tm_shape(boundary) + tm_borders(col = "black", lwd = 2)
+```
+
+This is quite a lot of code to unpick. The first call to `tm_shape` determines which layer is to be mapped, then a specific mapping function is applied to that layer (in this case `tm_polygons`) and a variable is passed to it. Other parameters to specify are the palette, whether a histogram is to be displayed and the type of breaks to be imposed (here a $k$-means was applied). The help for `tm_polygons` describes a number of different parameters that can be passed to `tmap` elements. Next, some adjustments were made to the defaults through the `tm_layout` function, which allows you to override the defaults that `tmap` automatically assigns (shading scheme, legend location etc). Finally the boundary layer was added. 
+
+There are literally 1000's of options with `tmap` and many of them are controlled in the `tm_layout` function. You should inspect this:
+```{r}
+?tm_layout
+```
+
+The code below maps point data values in different ways using `df_sf`. There are 2 basic options: change the size or change the shading of the points according to the attribute value. The code snippets below illustrate these approaches (Figures 21 and 22).
+
+First by size using `tm_bubbles`:
+```{r warning = F, message=F, fig.cap = "Point data values using size."}
+# the 1st layer
+tm_shape(boundary) +
+  tm_fill("olivedrab4") +
+  tm_borders("grey", lwd = 2) +
+  # the points layer
+  tm_shape(df_sf) +
+  tm_bubbles("SiltPC", title.size = "% Silt", scale = 0.8,  col = "gold")
+```
+
+Second by shade using `tm_dots`:
+```{r eval = T, warning = F, message = F, fig.cap = "Point data values using choropleth mapping (colour)."}
+# the 1st layer
+tm_shape(boundary) +
+  tm_fill("grey70") +
+  tm_borders("gold", lwd = 2) +
+  # the points layer
+  tm_shape(df_sf) +
+  tm_dots("SiltPC", size = 0.5, title = "% Silt", shape = 19) +
+  tm_layout(legend.outside = T, frame = F)
+```
+
+As **Homework** or when you return to this Session after the workshop, you should explore the `introductory `tmap` vignettes which describes other approaches for mapping different types of variables, in built styles, plotting multiple layers:
+
+```{r eval = F}
+vignette("tmap-getstarted", package = "tmap")
+```
+
+It is possible to use an OpenStreetMap backdrop for some basic web-mapping with `tmap` by switching the view from the default mode from `plot` to `view`. You need to be online and connected to the internet. The code below generate zoomable web-map map with an OpenStreetMap backdrop in the Figure 23, with a transparency term to aid the understanding of the local map context:
+
+```{r eval=TRUE, echo=F, warning=F,message=F, fig.cap="Land use categories, with an OSM backdrop (© OpenStreetMap contributors)."}
+library(png)
+library(grid)
+img <- readPNG("df_zone.png")
+grid.raster(img)
+tmap_mode("view")
+```
+
+```{r eval = F}
+tmap_mode("view")
+tm_shape(df_zone) +
+    tm_fill(c("LandUse"), palette = "Set1") +
+    tm_view(basemaps = c('OpenStreetMap'))
+```
+
+Aerial imagery and satellite imagery (depending on the scale and extent of the scene) can also be used to provide context as in Figure 24: 
+
+```{r eval=T, echo=F, fig.cap="Land use categories, with an imagery backdrop(© ESRI)."}
+img <- readPNG("df_zone2.png")
+grid.raster(img)
+```
+
+```{r eval = F}
+tm_shape(df_zone) +
+    tm_polygons(c("LandUse"), palette = "Set1", alpha = 0.6) +
+    tm_view(basemaps = c('Esri.WorldImagery'))
+```
+
+Other backdrops can be specified as well as OSM. Try the following: `Stamen.Watercolor`, `Esri.WorldGrayCanvas`, `OpenStreetMap` and `Esri.WorldTopoMap`. 
+
+The `tmap_mode` needs to be reset to return to a normal map view:
+```{r}
+tmap_mode("plot")
+```
+
+Finally in this brief discussion into `tmap` when maps are assigned to a named R object (like `p1`) then you can have greater control over how  multiple maps are plotted together using the `tmap_arrange` function: 
+
+```{r warning = F, message = F, ch5fig14, cache = F, eval=TRUE, echo=T, results='hide',message=FALSE, fig.cap="The result of combining multiple `tmap` objects."}
+p1 <- tm_shape(df_zone) + 
+  tm_fill("SandPC", palette = "Reds", style = "quantile", n = 5, title = "% Sand")+
+  tm_layout(legend.position = c("left", "top"))+
+  tm_shape(boundary) + tm_borders(col = "black", lwd = 2)
+p2 <- tm_shape(df_zone) + 
+  tm_fill("SiltPC", palette = "YlGn", style = "quantile", n = 5, title = "% Silt")+
+  tm_layout(legend.position = c("left", "top"))+
+  tm_shape(boundary) + tm_borders(col = "black", lwd = 2)
+p3 <- tm_shape(df_zone) + 
+  tm_fill("N2P", palette = "YlOrRd", style = "quantile", n = 5, title = "N:P ratio")+
+  tm_layout(legend.position = c("left", "top"))+
+  tm_shape(boundary) + tm_borders(col = "black", lwd = 2)
+
+tmap_arrange(p1,p2,p3, nrow = 1)
+```
+
+The full functionality of `tmap` has only been touched on. It is covered in much greater depth throughout in Brunsdon and Comber (2018) but particularly in Chapters 3 and 5. 
+
+## 4. Answers to Tasks
+
+This sections has suggested solutions / answers to the tasks. If your answers are different but generate the same results then this is absolutely fine! 
+
+### 4.1 Single table `dplyr` verbs 
+
+**Write some code that does the following:**
+
+1. Summarises median total Potassium percentage (`TPPC`) for different soil types, in ascending order. 
+
+```{r eval = F}
+df_sf %>% 
+  st_drop_geometry() %>%
+  group_by(SoilType) %>%
+  summarise(Mean_P = median(TPPC)) %>%  
+  ungroup() %>%
+  arrange(Mean_P) 
+```
+
+2. Selects observations (records) with a very high Sand percentage (i.e. greater than 75%) and calculates the mean  ammonium (NH4Ngkg) for different land use types.
+
+```{r eval = F}
+df_sf %>% 
+  st_drop_geometry() %>%
+  filter(SandPC>75) %>%
+  group_by(LandUse) %>%
+  summarise(Mean_NH4N = mean(NH4Ngkg)) %>%
+  ungroup()
+```
+
+3. Creates a variable of the ratio of total soil nitrogen percentage (`TNPC`) to total soil Phosphorous percentage (`TPPC`), calculates the mean value of this ratio over different land use types and presents the results in descending order. 
+
+```{r eval = F}
+df_sf %>% 
+  st_drop_geometry() %>%
+  mutate(NP_ratio = TNPC/TPPC) %>%
+  group_by(LandUse) %>%
+  summarise(Mean_NP = mean(NP_ratio)) %>%
+  arrange(desc(Mean_NP))
+```
+
+### 4.2 Additional `dplyr` task
+
+You should write some code that joins `df1` and `df2` that returns only the observations they have in common, and summarises mean soil organic carbon (`SOCgkg`) for different landscape positions. Again the solution to this is at the end of this document.
+
+```{r eval = F}
+df1 %>% inner_join(df2) %>% 
+  group_by(Position) %>%
+  summarise(Mean_SOC = mean(SOCgkg)) %>%
+  arrange(desc(Mean_SOC))
+```
+
+## References
+
+Brunsdon, C. and Comber, L., 2018. *An introduction to R for spatial analysis and mapping*. Second edition, Sage, London.
+
+Chang, W., 2018. *R graphics cookbook: practical recipes for visualizing data*. O'Reilly Media.
+
+Healy, K., 2018. *Data visualization: a practical introduction*. Princeton University Press.
+
+Wickham, H., 2010. A layered grammar of graphics. *Journal of Computational and Graphical Statistics*, 19(1), pp.3-28.
+                                                                                          
+Wilkinson, L., 2012. The grammar of graphics. In *Handbook of Computational Statistics* (pp. 375-414). Springer, Berlin, Heidelberg.
+

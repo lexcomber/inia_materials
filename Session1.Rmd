@@ -1,0 +1,613 @@
+---
+title: "Session 1: Reading, writing and creating Data and Spatial Data in R"
+author: "Lex Comber and Paul Harris"
+date: "November 2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+\tableofcontents
+
+## Overview
+
+This session covers the following topics:
+
++ Data (data tables, formats, creating, reading and writing, manipulating)
++ Spatial Data (`sp` and `sf` formats, creating, reading and writing)
+
+The exercises use a dataset which will be downloaded from a GitHub repository. Other data  provided by specific packages to demonstrate some of the functions are also be used.
+
+**The Liudaogou watershed data**\
+This is a soils dataset of 689 observations, spaced at approximately 100 m in a small watershed in the Loess Plateau, China (110.32821 E and 38.83433 N). The data are described in Wang et al. (2009) who undertook a series of linear regression analyses, complemented with geostatistical variographic analyses and Comber et al. (2018)  who used the same data to develop an extension to Geographically Weighted Regression (GWR). The data set includes soil total nitrogen percentage (TNPC), soil total phosphorus percentage (TPPC) (each taken as the response variable in a regression), and a number of predictor variables; soil organic carbon (SOCgkg), nitrate nitrogen (NO3Ngkg), ammonium (NH4Ngkg), percentage clay (ClayPC), silt (SiltPC), sand (SandPC) content, TNPC/TPPC (N2P), vegetation coverage (CoveragePC), Slope, Aspect, Altitude_m, SoilType, LandUse and Position. In both Wang et al. (2009) and Comber et al. (2018), the data were transformed, and this operation is retained here: TNPC, SOCgkg, NO3Ngkg and NH4Ngkg are transformed using natural logs and ClayPC is square root transformed. The observation coordinates are in the EPSG4793 projection (New Beijing / 3-degree Gauss-Kruger CM 108E - see http://epsg.io/4793). 
+
+The data are illustrated in the figure below: 
+
+**Ways of Working**\
+Remember for any R session or work you should 
+
+1. Create a separate folder to work from for each Session
+1. Always write your code into an R script... **always**!
+1. Save the script to the folder
+1. Set the working directory to the folder location
+
+A number of different packages will be used in this Session and you should install these. The code below will check whether they are installed on your machine and if they are not will install them and their dependencies (other packages that are needed):  
+```{r eval = F}
+if (!is.element("repmis", installed.packages()))
+    install.packages("repmis", dep = T)
+if (!is.element("GISTools", installed.packages()))
+    install.packages("GISTools", dep = T)
+if (!is.element("sf", installed.packages()))
+    install.packages("sf", dep = T)
+if (!is.element("tmap", installed.packages()))
+    install.packages("tmap", dep = T)
+if (!is.element("tidyverse", installed.packages()))
+    install.packages("tidyverse", dep = T)
+if (!is.element("raster", installed.packages()))
+    install.packages("raster", dep = T)
+if (!is.element("rgdal", installed.packages()))
+    install.packages("rgdal", dep = T)
+```
+
+You should then load the packages into your R session:
+```{r, eval = T, message=F, warning=F}
+library(repmis)
+library(GISTools)
+library(sf)
+library(tmap)
+library(tidyverse)
+library(raster)
+library(rgdal)
+```
+
+The expectation is that workshop attendees have at least a basic understanding of R as summarised in the 'Session 0: R Basics' materials.
+
+## 1. Data 
+
+This section covers the following topics: 
+
+- data tables: `tibble` vs `data.frame` formats, manipulating data tables and creating new variables
+- creating, reading and writing data tables
+- simple plots (more advanced plotting is covered in later session)
+
+### 1.1 Data Tables: `tibble` vs `data.frame` formats
+
+R has many different ways of storing and holding data from individual data elements to lists of different data types and classes. In much data analysis and for the purposes of conceptual simplicity, most of the data you will encounter can be thought of being held in a **flat** data table - similar to a spreadsheet. 
+
+The rows represent some real world feature (a sample, a person, a transaction, an address, a date, etc) and the columns represent some attribute associated with that feature. Rows in databases are commonly referred to as _records_ or _observations_ and columns as _fields_ or _variables_. The individual cells in the table are referred to as _values_. There are some cases where the features can be either a record or a field. For example a date observation could be summary of daily sampling activities as a record, or an attribute associated with a measurement at a sample location (as a field). 
+
+The key consideration is that individual records or observations refer to a **single object** and the fields or variables refer to a **single quality** such as set of measurements. In *spatial data*, covered in Section 2, the records or observations refer a feature that has a location. 
+
+In R there are many data formats and packages for handling and manipulating data in tabular formats. This workshop will move between `data.frame` and `tibble` formats, with the later defined within the `tibble` package (part of the `tidyverse` (https://www.tidyverse.org), a collection of R packages designed for data science). 
+
+In recent years the `tibble` format has taken over from `data.frame` because the `tibble` format has the following properties: 
+
+- It allows *multiple types* of variable or attribute to be stored in the same table. This is similar to the `data.frame` format but different from the `matrix` format which can only hold one data *type* such as `integer`, `logical` or `character`, etc. 
+- It tries to be *lazy* and does not try to link partially matched variable names (unlike the `data.frame` format - see the example below)
+- It is *surly* and complains more if things are not exactly specified, identifying problems earlier in the data analysis cycle and thereby forcing cleaner coding. 
+
+The `tibble` and `data.frame` formats are both composed of a series of `vectors` of equal length, which together form two dimensional data structures. Each vector forms a field in the data table containing values for a particular variable, theme or attribute. It has a name (or *header*) and is ordered such that the $n^th$ element in the vector is a value for the *nth* record (row) representing the $n^th$ feature. 
+
+The above qualities also apply to the class of `data.frame`, which at the time of writing is probably the most common data format in R. However, the `data.frame` format is not *lazy* or *surly* as is the `tibble` format. 
+
+To illustrate the differences and similarities between tibbles and data frames, the code snippet below loads the Liudaogou watershed data to an R object called `data`
+
+```{r, eval = T, message=F, warning=F}
+library(repmis)
+source_data("https://github.com/lexcomber/GWRroutemap/blob/master/Liudaogou.RData?raw=True")
+```
+The data table can be examined: 
+```{r eval = F}
+class(data)
+str(data)
+head(data)
+```
+
+The `data.frame()` function and format, by  default encodes character strings into factors. This can be seen in the `str` function below and by the Levels that are indicated in the code below: 
+```{r}
+# create variables
+coverage <- data$CoveragePC
+soil <- data$SoilType
+position <- as.character(data$Position)
+# create a new data.frame
+df <- data.frame(coverage, soil, position)
+head(df)
+# examine the structure of df
+str(df)
+unique(df$soil)
+```
+
+To overcome this the `df` object can be refined using `stringsAsFactors = FALSE` :
+```{r eval = T}
+df <- data.frame(coverage, soil, position, stringsAsFactors = FALSE)
+str(df)
+```
+
+The `tibble` is a reworking of the `data.frame`. It is a definite upgrade. It retains the advantages of the `data.frame` formats (multiple data types, for example) and eliminates less effective aspects. Enter the code below to create `tb`:
+```{r}
+tb <- tibble(coverage, soil, position)
+tb
+```
+
+Probably the biggest criticism of `data.frame` is the partial matching behaviour. Enter the following code:
+```{r eval = F}
+head(df$co)
+head(tb$co)
+```
+Although there is no variable called `co`, the partial matching in the `data.frame` means that the `coverage` variable is returned. This is a bit worrying! 
+
+A further problem is what gets returned when a data table is subsetted. A `tibble` always returns a `tibble`, whereas a `data.frame` may return a `vector` or a `data.frame` depending on the dimensions of the result. For example compare the outputs of the following code:
+```{r, eval = F}
+# a single column - the second one
+head(df[,2])
+head(tb[,2])
+class(df[,2])
+class(tb[,2])
+# the first 2 columns
+head(df[,1:2])
+head(tb[,1:2])
+class(df[,1:2])
+class(tb[,1:2])
+```
+
+A final consideration is that the print method for `tibble` returns the first 10 records by default, whereas for `data.frame` all records are returned. The `tibble` class also includes a description of the class of each field (column) when it is printed. Examine the differences between these data table formats:
+```{r eval = F}
+tb
+df
+```
+
+It is possible to convert between a `tibble` and `data.frame` using the following functions:
+```{r eval = F}
+data.frame(tb) 
+as_tibble(df) 
+```
+
+As **Homework** or when you return to this Session after the workshop you should examine the `tibble` vignette and explore the sections on creation, coercion, subsetting etc: 
+```{r eval = F}
+vignette("tibble")
+```
+
+The `tibble` format is been designed to support data manipulations using the `dplyr` package (Part 4 of this Session), data visualizations using the `ggplot2` package (Session 3) as well as data analysis more generally. 
+
+### 1.2 Creating, reading and writing data tables
+
+The `data` object was downloaded from an `.RData` file hosted on GitHub. There are a number of ways of loading data into your R session: 
+
+1. read a local file in proprietary format (eg an excel file or `.csv` file).
+1. read a local R formatted binary file (typically with an `.rda` or `.RData` extension).
+1. download and manipulate data from the internet - we are not going to do that in this workshop).
+1. read a file from somewhere in the internet (proprietary or R binary format) - we have already done that loading the data earlier and there are other ways which we will not cover here.
+
+Before any reading and writing you should make sure that your R session is pointing at your working directory for this Session. This can be done in a number of ways. One way is to use the `setwd()` function:
+
+```{r eval = F}
+## Mac
+setwd("/Users/geoaco/Desktop/")
+## Windows
+setwd("C:\\")
+```
+
+Another is to use the menu system
+
+**Session > Set Working Directory ...** which give you options to chose from.
+
+And of course you could always include the full file path in the read or write command. 
+
+```{r echo = F}
+# setwd("~/Dropbox/5 Hedonic Regression Paper/workshop/RPracs")
+```
+#### Loading and saving in`.txt` and `.csv` format data 
+
+The base installation of R comes with core functions for reading and writing `.txt`, `csv` and other tabular formats to save and load data to and from local files. 
+
+The code below saves the data file that was initially loaded:
+```{r eval = F}
+write.csv(data, file = "session1_data.csv")
+```
+You should check that the file has been created in your working directory. 
+
+The CSV file can be read in, with the `stringsAsFactors` parameter set to `TRUE` to avoid the factor issue with the `data.frame` format described above :
+```{r eval = F}
+data2 = read.csv("session1_data.csv", stringsAsFactors = T)
+str(data2)
+```
+
+You can use the `write.table` function to write `.txt` files with different field separations:
+```{r eval = F}
+# write a tab delimited text file
+write.table(data, file = "session1_data.txt", sep = "\t", row.names = F,
+            qmethod = "double")
+data2 = read.table(file = "session1_data.txt", header = T, sep= "\t", 
+                   stringsAsFactors = F)
+head(data2)
+str(data2)
+```
+
+Data tables in `tibble` format can be treated in the same way:
+```{r eval = F}
+write.table(tb, file = "tb.txt", sep = "\t", row.names = F,
+            qmethod = "double")
+tb2 = as_tibble(read.table(file = "tb.txt", header = T, sep= "\t", 
+                           stringsAsFactors = F))
+tb2
+```
+
+#### Loading and Saving R binary files
+
+You can also load and save R binary files. These have the advantage of being very efficient at storing data and quicker to load than for example, `.csv` files. The code below saves the `data` R object - check your working directory when you have run this.
+
+```{r eval = F}
+save(list = c("data"), file = "soils.RData")
+```
+
+Multiple R objects can be saved in the same `.RData` file:
+```{r eval = F}
+save(list = c("data", "tb"), file = "data.RData")
+```
+
+The `Rdata` files can be opened using the `load` function:
+```{r eval = F}
+load(file = "data.RData")
+```
+
+What this does is load in the R objects from the `.RData` file to the R session, with the same names. To test this run the code below if you have run the code snippet above. This deletes two R objects and then loads them back in:
+```{r eval = F}
+ls()
+rm(list = c("data", "tb"))
+ls()
+load(file = "data.RData")
+ls()
+```
+
+The entire workspace of all R objects can also be saved:
+```{r eval = F}
+save.image(file = "data.RData")
+```
+
+#### Loading remote files
+
+You can use the `read.csv`, `read.table` and `load` functions to read data directly from a URL.
+```{r eval = F}
+url <- url("http://www.people.fas.harvard.edu/~zhukov/Datasets.RData")
+load(url)
+ls()
+```
+
+#### Other data formats 
+
+As you work with R you will want to use all kinds of different data formats - from different flavours of data table `.CSV`, `Excel`, `SPSS` to explicitly geographical data such as shapefiles and rasters. These can all be loaded directly into R using functions from different packages. There are too many to cover comprehensively. But generally if there is a data format out there, there is also a tool to get it into R!  
+
+The `foreign` package can be used to load many file types (e.g. EXCEL and SPSS) and a number of different approaches for reading data types are listed here: [https://www.r-bloggers.com/read-excel-files-from-r/](https://www.r-bloggers.com/read-excel-files-from-r/)
+
+
+### 1.3 Simple plots 
+
+It is instructive to examine some simple data plotting. We will cover methods for  more advanced graphics in later sessions.
+
+Clear your workspace and load in the soils data:
+```{r}
+rm(list = ls())
+load("soils.RData")
+```
+
+The simplest plot is a **histogram** of a single variable as in Figure 1:
+
+```{r eval = T, fig.cap="An example of a simple histogram."}
+hist(data$SiltPC, xlab='Silt %', main='Histogram of Silt %', 
+     col = 'DarkRed', breaks = 15)
+```
+
+We may also be interested in a probability distribution rather than a frequency count. Note the use of the parameter `prob = T` which tells R to compute the probabilities for each histogram bin. This makes the $y$-axis compatible with a kernel density estimate (a smooth estimate of the probability distribution of $x$),  so the two may be overlaid.  Here this is done by using the `lines` function with a kernel density estimate for the distribution given by `density`.  A `rug` plot is added to show the exact locations of the values on the $x$-axis.
+
+Run the following code to see such graphs as in Figure 2:
+```{r fig.cap="An example of a density histogram with a density plot."}
+hist(data$SiltPC, prob = T, xlab='Silt %', main='Histogram of Silt %',
+     col='NavyBlue', breaks = 15)
+lines(density(data$SiltPC,na.rm=T),col='salmon',lwd=2)
+rug(jitter(data$SiltPC))
+```
+
+A density plot converts the distribution of a numeric variable to a probability using a kernel density estimate. This histogram shape is the same and this allows distributions of different variables to be directly compared: A good explanation of this is here:
+https://chemicalstatistician.wordpress.com/2013/06/09/exploratory-data-analysis-kernel-density-estimation-in-r-on-ozone-pollution-data-in-new-york-and-ozonopolis/
+
+The **scatterplot** provides the simplest way of examining how 2 variables interact.
+
+In order to examine the relationships (correlations) between some of the continuous variables in `data` we can plot them against each other as in Figure 3:  
+
+```{r fig.cap="A basic plot of relationships between numeric variables."}
+df = data[, c(6:11)]
+plot(df, cex = 0.5, col = grey(0.145,alpha=0.5))
+```
+
+Another useful tool here is to show the upper triangle of the scatterplot matrix with smoothed trend lines. These are achieved with *lowess* curve fits (Cleveland, 1979) - these are smooth (but possibly curved) bivariate trend lines - and provide a good way of judging by eye whether there are useful correlations in the data, including collinearity in a given regression's set of predictor variables.  Essentially a straight-line shaped trend with not too much scattering of the individual points suggests collinearity might be an issue.  When two predictors are correlated it can be difficult to identify whether it is one or the other (or both) that influence the quantity (response) to be predicted. The code below does this.  Note that as collinearity amongst the *predictors* is the concern here, we focus on these for this graphic (i.e. the response variable, TNPC or TPPC is not plotted in this instance).  The `upper.panel=panel.smooth` causes the lowess curves to be added as in Figure 4.
+
+```{r fig.cap="A plot with lowess curve fits."}
+plot(df, cex = 0.5, col = grey(0.145,alpha=0.5), upper.panel=panel.smooth)
+```
+
+The `cor` function can be used to to examine correlation or collinearity amongst the variables as in Figure 5. 
+```{r}
+tab <- round(cor(df), 3)
+```
+
+Note, you could write the table out to a `.csv` file:
+```{r eval = F}
+write.csv(tab, file = "tab.csv")
+```
+
+What we are looking for in the plots, and to be confirmed in the table, are correlations that look like straight lines, showing that values in one variable change with changes in another.
+
+## 2. Spatial Data 
+
+This section covers the following topics: 
+
+- spatial data formats: `sp` vs `sf` formats, spatial data manipulations
+- creating, reading and writing spatial data
+- some initial mapping of spatial data
+
+### 2.1 Spatial data formats: `sf` vs `sp`
+
+For many years the tools for handling spatial data in R were built around the spatial data structures defined in the `sp` package. The `sp` class of objects are broadly analogous to shapefile formats (lines points, areas) and raster or grid formats. The `sp` format defined spatial objects with a `data.frame` (holding attributes) and without (purely spatial objects) as shown in the table below (Table 1).
+
+However, recently a new class of spatial object has been defined called `sf` or `Simple Feature`. An overview of the evolution of spatial data in R can be found at https://edzer.github.io/UseR2017/. The `sf` format seeks to encode spatial data in a way that conforms to a formal standard (ISO 19125-1:2004). This emphasises the spatial geometry of objects, their hierarchical ordering and the way that objects are stored in databases. The aim of the team developing `sf` (actually many of them are the same people who developed `sp` so they do know what they are doing!!) is to provide a new consistent and standard format for spatial data in R. The `sf` format seeks to implement *tidy* data in the same way as the `tibble` format and the `sf` package has a number of other *tidy* aspects including:
+
+- all functions/methods start with `st_` (press tab to search), use `_` and are in lower case.
+- all functions have data as first argument and are pipe-friendly (i.e. a suitable for `dplyr` manipulations).
+- `dplyr` verbs have been defined for  `sf` objects meaning that they can be manipulated in the same way as `tibble` format data tables.
+
+The `sf` package puts features in `sf` tables deriving from `data.frame` or `tbl_df`, which have geometries in a list-column of class `sfc`, where each list element is the geometry of a single feature of class `sfg`. Feature geometries are represented in R by:
+
+- a numeric vector for a single point (POINT)
+- a numeric matrix (each row a point) for a set of points (MULTIPOINT or LINESTRING)
+- a list of matrices for a set of set of points (MULTILINESTRING, POLYGON)
+- a list of lists of matrices (MULTIPOLYGON)
+- a list of anything mentioned above (GEOMETRYCOLLECTION)
+(all other classes also fall in one of these categories)
+
+In this workshop, all spatial data will mainly be held and analysed in `sf` format. However, may functions for spatial analysis still only work with `sp` format objects and there are functions to transform spatial data between these formats. 
+
+```{r tab21, echo = F}
+c1 <- c("SpatialPoints", "SpatialLines", "SpatialPoygons", "SpatialPixels", "SpatialGrid")
+c2 <-  paste0(c1, "DataFrame")
+c3 <- c("Point shapefile", "Line shapefile", "Polygon shapefile", "Raster or Grid", "Raster or Grid")            
+df <- data.frame(c1,c2,c3)
+colnames(df) <- c("Without Attributes","With Attributes", "ArcGIS Equivalent")
+#kable (df, booktabs = TRUE, format = "html",
+#       caption = 'the `sp` class of Spatial objects ')
+knitr::kable (df, booktabs = TRUE, 
+       caption = 'the `sp` class of Spatial objects ')
+```
+
+### 2.2 Creating, reading and writing spatial data
+
+Clear the workspace and make sure the soils data is loaded into your R session.
+```{r}
+rm(list = ls())
+load("soils.RData")
+```
+
+The code below creates a spatial dataset from this data table using the coordinates and information about the geographical projection:
+
+```{r}
+df_sf <- st_as_sf(data[,c(2:4,6:11)], 
+                  coords = c("Longitude", "Latitude"), 
+                  crs = 4793)
+```
+
+And you can examine what was created:
+```{r eval = F}
+class(df_sf)
+str(df_sf)
+df_sf
+```
+Notice, that like `tibble` format data tables, just the first 10 records are printed out by  default rather than all of them.
+
+The geometry and attributes can be plotted using the default `plot` method for `sf` objects:
+```{r, eval = F}
+plot(df_sf)
+plot(st_geometry(df_sf), pch = 19, cex = 0.5)
+```
+
+It is possible to save `sf` objects to R binary files as before:
+```{r eval = F}
+save(list = "df_sf", file = "df_sf.RData")
+```
+
+And the `sf` object can be written out in to specific spatial data formats:
+```{r eval = F}
+getwd()
+# as shapefile
+st_write(df_sf, "point.shp", delete_layer = T)
+# as GeoPackage
+st_write(df_sf, "point.gpkg", delete_layer = T)
+```
+
+A huge range of spatial data formats for vector data can be specified - see https://gdal.org/drivers/vector/index.html - and generally these are picked up by `st_write` from the file extension. More correctly, the code above can be written as follows:
+```{r eval = F}
+st_write(df_sf, "point.shp", delete_layer = T, driver = "ESRI Shapefile")
+```
+
+The `st_read` function can be used to read data into the R session:
+```{r eval = F}
+new_df_sf = st_read("point.shp")
+new_df_sf
+```
+
+It is also very easy to convert between `sp` and `sf` formats and the code below does this:
+```{r}
+# from sf to sp
+df.sp = as(df_sf, "Spatial")
+class(df.sp)
+# from sp to sf
+new_df_sf = st_as_sf(df.sp)
+```
+
+These read and write functions can be used with points, lines and areas. You could run the code below to download the bounding polygon in `sp` format for the soils data, it converts it to `sf`, assigns a projection to it (from `df_sf`) and then writes it to a spatial data file: 
+
+```{r eval = T, message=F, warning=F}
+source_data("https://github.com/lexcomber/GWRroutemap/blob/master/boundary.RData?raw=True")
+boundary = st_as_sf(boundary)
+boundary = st_set_crs(boundary, 4793)
+st_write(boundary, "poly.shp", delete_layer = T, driver = "ESRI Shapefile")
+```
+
+We can examine spatial data in the same way as non-spatial data:
+```{r eval = F}
+dim(df_sf)
+summary(df_sf)
+```
+
+These data attributes can be mapped using the code below as in the map below using the `qtm` function from the `tmap` package for a quick map as in Figure 6: 
+```{r fig.cap = "A quick map."}
+qtm(df_sf, symbols.size = "SandPC", scale = 0.7)
+```
+
+As further **Homework** or when you return to this Session after the workshop you should examine the `sf` vignettes. These include an overview of the format, reading and writing from and to `sf` formats including conversions to and from `sp` and `sf`, and some illustrations of how `sf` objects can be manipulated. The code below will create a new window with a list of all of the `sf` vignettes:
+
+```{r eval = F}
+library(sf)
+vignette(package = "sf")
+```
+A full description of the `sf format can be found in the `sf1` vignette: 
+```{r eval = F}
+vignette("sf1", package = "sf")
+```
+
+### 2.3 Different spatial data types: conversion, import and export
+
+There are a number of spatial data **types** as any of you who have experience using GIS will know. Broadly these are Vector (points, lines, areas) and Raster (grids, pixels). Each have their advantages. In this section you will explore the raster and grid formats using the `sp` and `raster` packages. The code below uses the `meuse` soils data (see https://cran.r-project.org/web/packages/gstat/vignettes/gstat.pdf) to create a first a `SpatialPixelsDataFrame` and then a `raster` object:
+
+
+```{r}
+# sp should have been loaded earlier with GISTools 
+library(sp)
+# first create the SPDF
+data(meuse.grid) 
+coordinates(meuse.grid) <- ~x+y 
+gridded(meuse.grid) <- TRUE
+class(meuse.grid)
+# check the data in the SPDF
+str(meuse.grid@data)
+# set the projection of this sp object
+proj4string(meuse.grid) = 
+  CRS("+init=epsg:28992 +towgs84=565.237,50.0087,465.658,-0.406857,0.350733,
+      -1.87035,4.0812 +proj=sterea +lat_0=52.15616055555555 +lon_0=5.38763888888889 
+      +k=0.9999079 +x_0=155000 +y_0=463000 +ellps=bessel +units=m +no_defs ")
+```
+
+
+Now that this is projected we can plot this using a standard plot as in Figure 7:
+```{r fig.width = 5, fig.cap="A standard plot of raster data."}
+# standard plot - specify the layer
+plot(meuse.grid[, "soil"])
+```
+
+Or or a quick `tmap` as in Figure 8:
+```{r fig.cap="A `qtm` map of raster data."}
+# using a quick tmap
+qtm(meuse.grid, raster = "soil")
+```
+
+It is also possible to generate a quick plot of the data using the `image` function:
+```{r eval = F}
+# a simple and quick image
+image(meuse.grid[,4])
+```
+
+
+#### Conversion to other raster formats
+
+The `meuse.grid` object can be converted to other `sp` formats including `SpatialPointsDataFrame` or a `SpatialGridDataFrame` in the following way:
+
+```{r, fig.width=5}
+meuse.gr <- as(meuse.grid, "SpatialGridDataFrame")
+meuse.pt <- as(meuse.grid, "SpatialPointsDataFrame")
+```
+
+The results can be examined using a quick `tmap`:
+```{r eval = F}
+qtm(meuse.gr, raster = "ffreq")
+```
+
+
+The `GISTools` package has some mapping functions that are good for continuous vector variables such as `SpatialPointsDataFrame` format data as in Figure 9: 
+```{r fig.cap="A choropleth map of the `dist` variable in the `meuse` data."}
+choropleth(meuse.pt, v = meuse.pt$dist, pch = 15, cex = 0.3)
+choro.legend("left", "top", auto.shading(meuse.pt$dist))
+```
+
+We can convert the`meuse.grid` from the `SpatialPixelsDataFrame` format to a `raster` format, a layer at a time and then combined to stack if required:
+
+```{r}
+r1 <- raster(meuse.grid, "dist") 
+r2 <- raster(meuse.grid, "soil") 
+r = stack(r1,r2)
+```
+
+#### Reading and Writing rasters 
+
+Finally, the rasters in different formats can be written out and read as before using different read/write functions for data in `raster` and `sp` formats.
+
+##### `sp` format
+
+The `readGDAL` and `writeGDAl` functions from the `rgdal` package can be used to write out `sp` format `SpatialPixelsDataFrame` . The `rgdal` package is the R implementation of the Geospatial Data Abstraction Library (GDAL). This has been described as the 'swiss army knife for spatial data' (https://cran.r-project.org/web/packages/sf/vignettes/sf2.html), as it is able to read or write vector and raster data of all file formats. 
+
+The code below uses this to read and write single layer rasters or grids. Note that the factors in the data (`soil` and `ffreq`) need to be converted to a numeric (integer) format for this:
+
+```{r eval = T}
+# convert factors
+meuse.grid$soil = as.numeric(meuse.grid$soil)
+meuse.grid$ffreq = as.numeric(meuse.grid$ffreq)
+# write to a file using named variable
+writeGDAL(dataset = meuse.grid[,"soil"], fname = "meuse.tif", drivername = "GTiff")
+# write to a file using numbered variable
+writeGDAL(dataset = meuse.grid[,3], fname = "meuse.tif", drivername = "GTiff")
+# read to an object
+gr = readGDAL(fname = "meuse.tif")
+```
+
+The `readGDAL function creates a `SpatialGridDataFrame` object.
+
+#### `raster` format
+
+The `raster` package has it own read and write functions. These are illustrated below for a single raster layer. But again please note that the factors in the data (`soil` and `ffreq`) need to be converted to a numeric (integer) format for this:
+
+```{r eval = T}
+# uses the converted factors from meuse.grid
+r1 <- raster(meuse.grid, "dist") 
+r2 <- raster(meuse.grid, "soil") 
+r = stack(r1,r2)
+```
+And now the write and read functions can be applied. Notice how to read a raster (or a stack or brick) the path name is simply passed to the `raster` function:
+```{r eval = F}
+writeRaster(r1, filename="raster.tif", format="GTiff", overwrite=TRUE)
+r_new = raster("raster.tif")
+r_new
+```
+
+A number of additional parameters have to be specified for a raster stack or brick to be written and read:
+```{r eval = F}
+writeRaster(r, filename="multilayer.tif", options="INTERLEAVE=BAND", overwrite=TRUE)
+r_new = stack("multilayer.tif")
+r_new = brick("multilayer.tif")
+r_new
+```
+
+This ends the session and you may wish to save your workspace now:
+
+```{r eval = F}
+save.image("Session1.RData")
+```
+
+## References
+
+Comber, A., Wang, Y, Lü, Y., Zhang, X., Harris, P. 2018. Hyper-local geographically weighted regression: extending GWR through local model selection and local bandwidth optimisation. *Journal of Spatial Information Science* 17: 63-84.
+                                                                                          
+Cleveland, WS., 1977. Robust locally weighted regression and smoothing scatterplots. *JASA*, 74: 829-836.
+
+Wang, Y., Zhang, X., Huang, C. 2009. Spatial variability of soil total nitrogen and soil total phosphorus under different land uses in a small watershed on the Loess Plateau, China. *Geoderma* 150: 141–149.
+
+
+

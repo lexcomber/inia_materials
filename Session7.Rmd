@@ -1,0 +1,454 @@
+---
+title: "INIA International Workshop on Spatial Analysis in R - Session 7: Regression and spatial heterogeneity effects with Geographically Weighted Regression (GWR)"
+author: "Paul Harris and Lex Comber"
+date: "December 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+\tableofcontents
+
+## Overview
+
+This session covers the following topics on linear and (locally-linear) regression modelling with spatial data: 
+
++ Calibration of a Geographically Weighted Regression (GWR)
++ Calibration of a Multiscale GWR
++ Visualisation and interpretation of GWR outputs
+
+This session concerns the consequences of incorporating or not incorporating **spatially heterogeneity effects** when regression modelling with spatial data. Ignoring clear evidence of a non-constant relationship between the response and a predictor variable violates a core assumption of not only an OLS regression, but also a REML regression of Session 6, where only **fixed coefficient** estimates are assumed and were found.
+
+Thus in session, we take a look at (non-constant) **spatially-varying coefficient** models, where the regression coefficients can be mapped. Such spatial heterogeneity effects are considered through a Geographically Weighted Regression (GWR) framework (Brunsdon et al. 1996; Fotheringham et al. 2002) using the `GWmodel` package.
+
+The exercises in this session again use the Liudaogou watershed soils data. To recap, the data set includes: response variables; soil total nitrogen percentage (TNPC), soil total phosphorus percentage (TPPC), and predictor variables; soil organic carbon (SOCgkg), nitrate nitrogen (NO3Ngkg), ammonium (NH4Ngkg), percentage clay (ClayPC), silt (SiltPC), sand (SandPC) content, vegetation coverage (CoveragePC), Slope, Aspect, Altitude_m, SoilType, LandUse and Position.
+
+Again, a number of different packages will be used, most of which should already be installed (if not install, them):
+
+```{r message=F, warning=F}
+library(tmap)
+library(sf)
+library(spdep)
+library(dplyr)
+library(car)
+library(GWmodel)
+library(ggplot2)
+library(gridExtra)
+```
+
+Once again, remember to:
+
+1. Create a seperate folder for this Session
+1. Always write your code into an R script... **always**!
+1. Save the script to the folder
+1. Set the working directory to the folder location
+
+Having done that you should clear your workspace, create and load the 4 soils data files (used in Sessions 1, 2, 3 and 6). Note you will probably need to copy these over to the directory you are working from for this session:
+
+```{r message=F}
+# clear the workspace
+rm(list = ls())
+# load the data 
+load("soils.RData")
+load("df_sf.RData")
+load("df_zone.RData")
+load("boundary.RData")
+```
+
+Again, it may be useful to be able to work in both `sp` and `sf` formats:
+
+```{r cache = T}
+# convert to sp format
+df_sp = as(df_sf, "Spatial")
+zone_sp = as(df_zone, "Spatial")
+```
+
+It may also useful to add the coordinates (from our R object called `data`) to our spatial data sets, to use as extra predictor variables, if required:
+
+```{r}
+df_sf$Longitude <- data$Longitude
+df_sp@data$Longitude <- data$Longitude
+
+df_sf$Latitude <- data$Latitude
+df_sp@data$Latitude <- data$Latitude
+```
+
+## Preliminary EDA
+
+Before moving to the regression analyses (as in Session 6), a preliminary EDA (not conducted here) should include an assessment of: (a) each variable's distribution characteristics and transform if necessary (as in part, addressed below), (b) the correlation matrix for the continuous variables and (c) conditional boxplots for the response's relationship to any categorical or ordinal variable. All 3 forms of EDA should also include the detection of outliers. As the data are spatial, then inspecting the maps for all variables is recommended.
+
+In addition, as we are now considering local regression modelling through GWR, one may also consider (a) to (c), but now locally - and techniques to do this have been introduced in Session 3 with GW Summary Statistics (GWSS). We could also conduct an EDA on the predictor variable set as a whole through a GW principal component analysis (GWPCA) (Harris et al. 2011).
+
+The *spatial autocorrelation analyses* conducted in Session 6 should also now be considered as vital EDA and context to the *spatial heterogeneity analyses* conducted here. This is *important* as it is often difficult to identify one spatial effect from the other with any clarity (Harris 2019).
+
+As in early sessions, transforms on the soils data, similar to that done in Wang et al (2009) and Comber et al (2018) are conducted:
+
+```{r}
+df_sf$TNPC <- log(df_sf$TNPC+0.0001)
+df_sf$TPPC <- (df_sf$TPPC)^0.5
+df_sf$SOCgkg <- log(df_sf$SOCgkg)
+df_sf$NO3Ngkg <- log(abs(df_sf$NO3Ngkg))
+df_sf$NH4Ngkg <- log(df_sf$NH4Ngkg)
+
+df_sp@data$TNPC <- log(df_sp@data$TNPC+0.0001)
+df_sp@data$TPPC <- (df_sp@data$TPPC)^0.5
+df_sp@data$SOCgkg <- log(df_sp@data$SOCgkg)
+df_sp@data$NO3Ngkg <- log(abs(df_sp@data$NO3Ngkg))
+df_sp@data$NH4Ngkg <- log(df_sp@data$NH4Ngkg)
+```
+
+## 1. OLS regression
+
+For this session, we will use the same (global) OLS regression from Session 6 and confirm its fit in terms of: (i) R-squared, (ii) predictor variable significance, and (iii) evidence of collinearity amongst its predictors through VIFs.
+
+```{r}
+reg.mod = as.formula(TNPC ~SOCgkg+SiltPC+NO3Ngkg+NH4Ngkg)
+mod.OLS = lm(reg.mod, data = df_sf)
+```
+
+And its summary:
+
+```{r}
+summary(mod.OLS)
+```
+
+And the VIFs:
+
+```{r}
+vif(mod.OLS)
+```
+
+Thus all relationships to TNPC are significant (i.e. all coefficients are significantly different from zero at the 95% level at least). All VIFs are < 2 and the R-squared = 0.61. Now we can investigate to see if any of these relationships *potentially* vary across space, and as such, should not be fixed or constant as in the OLS regression.
+
+## 2. GWR
+
+A geographically weighted regression (GWR) use a moving window or kernel under which local regressions are computed at locations throughout the study area (just as that done for GWSS in Session 3).
+
+Critical to the operation of GWR (and all GW models) is a moving window or kernel. The kernel moves through the study area (for example to cells in a predefined grid) and at each location computes a local regression. It uses data under the kernel to construct a (local) regression at that location with data weighted such that points further away from the kernel centre contribute less to the solution. Hence the *weighted* element in the GW framework.
+
+Thus, the kernel defines the data and the weights that are used to calibrate the regression at each location. The weight, $w_i$, associated with each location $(u_i, v_i)$ is commonly a decreasing function of $d_i$, the distance from the centre of the kernel to $(u_i, v_i)$. A typical kernel function for example is the *bisquare* kernel. For a given bandwidth $h$, this is defined by:
+$$
+f(d) = \left\{ \begin{array}{cl}
+  \left(1 - \left( \frac{d}{h} \right)^2 \right)^2 & \mbox{ if $d < h$}; \\
+   & \\
+  0 & \mbox{ otherwise.} \end{array} \right.
+$$
+Here $h$ may be defined as a fixed distance value, or in an adaptive distance way, for example to be the distance from the $k$th closest point. Gollini et al. (2015) provide a description of common kernel shapes used in GW models. Generally, larger values of $h$ result in a greater degree of spatial smoothing - having a larger window around $\mathbf{u}$ in which the data have a non-zero weighting.
+
+### 2.1 Calibration of a GWR
+
+To fit a GWR using the `GWmodel` package, first calculate a distance matrix between the observation points - this speeds up the GWR calibrations. Using `gw.dist`, as follows:
+
+```{r}
+EUDM <- gw.dist(coordinates(df_sp))
+```
+
+Second, we can optimally calculate the GWR bandwidth. In this case, we are using a bisquare kernel weighting function (the default option) and a *fixed by distance* bandwidth (which is also the default option). We also have the option to select the bandwidth via an AIC or cross-validation (CV) approach. In this instance, the AIC approach is chosen.
+
+Thus using `bw.gwr`, the optimal bandwidth can be found as follows:
+
+```{r}
+gwr.bwd.f <- bw.gwr(reg.mod, df_sp, approach="AIC", kernel="bisquare", adaptive=FALSE, dMat=EUDM)
+```
+
+It is always useful to plot the Bandwidth vs AIC function (Figure 1). This provides a useful visual check on its behaviour and on how the minimum AIC is reached. To do this, we need the following function and commands:
+
+```{r warning=F, message=F, results=F}
+n.min <- 200 # user-specified minimum bandwidth
+n.max <- max(EUDM)+100 # user-specified maximum bandwidth
+interval.size <- 100
+fixed <- seq(n.min,n.max,by=interval.size)
+b.func.gwr <- matrix(nrow=length(fixed),ncol=1)
+for(i in 1:length(fixed)) {
+	g.gwr <- gwr.aic(fixed[i], Y = as.matrix(df_sp@data$TNPC), 
+							  X = as.matrix(df_sp@data[, c("SOCgkg", "SiltPC", "NO3Ngkg", "NH4Ngkg")]), 
+							  kernel="bisquare", adaptive=F, 
+							  dp.locat = coordinates(df_sp), dMat=EUDM)
+	b.func.gwr[i] <- g.gwr[1]
+	if(i%%10 ==0) cat(i, "\t")
+}
+fixed[which.min(b.func.gwr)]
+xy <- data.frame(x = fixed,y = b.func.gwr)
+```
+
+```{r, fig.cap = "Standard GWR bandwidth vs AIC function", warning=F, message=F}
+ggplot() + 
+    geom_point(data = xy, aes(x=x, y=y), size = 0.7, alpha = 0.5) +
+    geom_line(data = xy, aes(x=x, y=y)) +
+    geom_vline(xintercept = gwr.bwd.f, colour = "red") +
+    scale_x_continuous(breaks = seq(100, max(EUDM), 200))+
+    labs(
+    	subtitle = "GWR bandwidth function", 
+    	x = "Bandwidth size (m)", 
+    	y = "AIC")
+```
+
+Now we can fit a standard (basic) GWR using the optimal bandwidth from above (i.e. **770 m**) with `gwr.basic`. Observe that the bandwidth measures the "on-average" local relationship scale. A bandwidth of 770 m indicates broadly local variation in relationships considering the maximum distance between sample points is 3742 m and considering a distance-decay kernel weighting function is used.
+
+```{r}
+mod.GWR.f <- gwr.basic(reg.mod, data = df_sp, bw = gwr.bwd.f, kernel="bisquare", adaptive=FALSE, dMat=EUDM)
+```
+
+And using the `print` function, to view its output:
+
+```{r}
+print(mod.GWR.f)
+```
+
+### 2.2 Interpretation of GWR outputs
+
+Observe that we have quite an extensive output with `gwr.basic`, which is very useful. It also provides the summary for the OLS regression. The key diagnostics are the AICc values which are 1121.963 and 1067.153 for OLS regression and GWR, respectively. As GWR reduces AICc by more than 3 units (see Fotheringham et al. 2002), then GWR provides the more parsimonious model.
+
+Observe that GWR nearly always improves the R-squared (from 0.61 to 0.70), but as GWR is inherently more complex than an OLS regression, this is not surprising. Thus - **never use the R-squared** as the only discriminator between models; an AIC-type diagnostic should be reported always, as it caters for model complexity, as well as model fit.
+
+Other points of interest are the estimated GWR coefficient summaries (Minimum, 1st Quartile, Median, 3rd Quartile, Maximum) which need to be compared with the single coefficient estimates from the OLS regression. Thus, the GWR coefficients clearly vary and by mapping them, we can see how this variation plays out spatially. The code below defines a plot function for the GWR coefficient maps, which is then used to generate Figures 2 to 4:
+
+```{r}
+plot.gwr.coefs = function(gwr.model.SDF, variable.name, tvalues) {
+  # determine which observations are significant from via the t-values
+  tval = tvalues
+  signif = tval < -1.96 | tval > 1.96
+  # create the background
+  p = tm_shape(boundary)+tm_polygons("lightgrey")+
+  # create the map 
+  tm_shape(gwr.model.SDF) +
+    tm_dots(variable.name, size = 0.2, midpoint = 0) +
+  tm_layout(legend.position = c("right","bottom"))+
+  # now add the t-values layer
+  tm_shape(gwr.model.SDF[signif,]) +
+        tm_dots(shape = 1, size = 0.2) 
+  return(p)
+}
+```
+
+```{r, warning=F, message=F}
+p1 <- plot.gwr.coefs(mod.GWR.f$SDF, "Intercept", mod.GWR.f$SDF$Intercept_TV)
+p2 <- plot.gwr.coefs(mod.GWR.f$SDF, "SOCgkg", mod.GWR.f$SDF$SOCgkg_TV)
+p3 <- plot.gwr.coefs(mod.GWR.f$SDF, "SiltPC", mod.GWR.f$SDF$SiltPC_TV)
+p4 <- plot.gwr.coefs(mod.GWR.f$SDF, "NO3Ngkg",mod.GWR.f$SDF$NO3Ngkg_TV)
+p5 <- plot.gwr.coefs(mod.GWR.f$SDF, "NH4Ngkg",mod.GWR.f$SDF$NH4Ngkg_TV)
+```
+
+```{r, fig.cap = "GWR coefficient maps for SOC and % Silt", warning=F, message=F}
+tmap_arrange(p2, p3, ncol=2)
+```
+```{r, fig.cap = "GWR coefficient maps for NO3N and NH4N", warning=F, message=F}
+tmap_arrange(p4, p5, ncol=2)
+```
+```{r, fig.cap = "GWR coefficient map for the intercept", warning=F, message=F}
+p1
+```
+
+Interrogation of the coefficient maps from GWR is key to our investigation of spatial heterogeneity. In Figures 1 to 3, the spatial variation of the local coefficient estimates are given with their p-values < 0.05 highlighted (circled) for significance from zero.
+
+Interpretation of the coefficient maps are as follows:
+
+1. TNPC's relationship to all 4 predictors is spatially heterogeneous.
+1. TNPC's relationship to SOCgkg consists of only positive local relationships which are significant everywhere.
+1. TNPC's relationship to Silt_PC consists of mostly positive local relationships many of which are significant.
+1. TNPC's relationship to NO3Ngkg can be both significantly negative and significantly positive.
+1. TNPC's relationship to NH4Ngkg can be both negative and positive, where sizable areas of significant negative relationships exist.
+1. The local intercept varies across space and is significant almost everywhere, aside from a few areas towards the edge of the watershed.
+
+Note that our given inferences (here and also with multiscale GWR, below) should only be viewed as exploratory (as using *pseudo* t-values) but inference can be refined in GWR via corrections for Multiple Hypothesis Testing (da Silva and Fotheringham 2016) or via Bootstrap techniques (Harris et al. 2017). When Multiple Hypothesis Testing, a large proportion will be false positive, so a correction is applied to reduce this false discovery rate.
+
+## 3. Multiscale GWR
+
+In the standard form, a single bandwidth is used to calibrate GWR. This may be unrealistic because it implicitly assumes that each response-to-predictor relationship operates at the same spatial scale. Some relationships may operate at larger scales and others at smaller scales. A standard GWR will nullify these differences and find a ‘best-on-average’ scale of relationship non-stationarity. In this respect, mixed (or semiparametric) GWR (Brunsdon et al. 1999) can be implemented in which some relationships are assumed to be stationary whilst others are assumed non-stationary. However, mixed GWR only in part addresses the limitation of standard GWR, as the subset of locally-varying relationships is still assumed to operate at the same spatial scale. To fully address this, multiscale GWR (Lu et al. 2017; Fotheringham et al. 2017; Leong and Yue 2017) can be used, in which each relationship is specified using its own bandwidth, and the scale of relationship non-stationarity may vary for each response-predictor relationship.
+
+### 3.1 Calibration of a Multiscale GWR
+
+Unlike the OLS regression and GWR, multiscale GWR require an iterative back-fitting procedure for its estimation and as such can be computationally demanding. In this session's implementations of multiscale GWR, a bisquare weighting kernel is again used, where all 5 (fixed) bandwidths of our model are optimized by minimizing the (corrected) AIC. Multiscale GWR is implemented with `gwr.multiscale`. 
+
+Observe the model calibration takes time (especially if the predictor data are not scaled to mean zero). The number of iterations are also key (so set = 30 for demonstration).
+
+In this exposition of multiscale GWR, we choose to first find bandwidths with scaled predictor data and then re-fit with the estimated bandwidths set but to unscaled predictor data (also the hatmatrix takes time to compute so is only set to TRUE in the second run).
+
+In addition, we will need to source an updated Multiscale GWR function. This overwrites the `gwr.multiscale` function in the `GWmodel` package.  This is commonplace in R package where there exists a development version before it is officially released in the package. The updated version has extra outputs (coefficient standard errors and t-values) - but outputs not fully tested for release.
+
+```{r}
+## MSGWR with standard errors and t-values
+# if the file is local 
+# source("gwr.multiscale_T.R") # with standard errors and t-values
+# from Lex's Gitbub site
+library(devtools)
+source_url("https://github.com/lexcomber/inia_materials/blob/master/gwr.multiscale_T.r?raw=TRUE") 
+```
+
+```{r warning=F, message=F, results=F}
+mod.MGWR.f1 <- gwr.multiscale(reg.mod, data = df_sp, max.iterations = 30,
+             criterion="CVR", kernel = "bisquare", adaptive=FALSE,  
+	           bws0=c(gwr.bwd.f,gwr.bwd.f,gwr.bwd.f,gwr.bwd.f,gwr.bwd.f),
+	           dMats=list(EUDM,EUDM,EUDM,EUDM,EUDM),
+	           verbose = F, hatmatrix = F, predictor.centered=rep(T, 4))
+# extract the bandwidths (see below)
+mgwr.bwd.f  <- round(mod.MGWR.f1[[2]]$bws,1) # the estimated bandwidths
+```
+Now run the MGWR with the bandwidths:
+```{r warning=F, message=F, results=F}
+mod.MGWR.f2 <- gwr.multiscale(reg.mod, data = df_sp, max.iterations = 30,
+             criterion="CVR", kernel = "bisquare", adaptive=FALSE,  
+	           bws0=c(mgwr.bwd.f),bw.seled=rep(T, 5),
+	           dMats=list(EUDM,EUDM,EUDM,EUDM,EUDM),
+	           verbose = F, hatmatrix = T, predictor.centered=rep(F, 4))
+```
+
+### 3.2 Interpretation of Multiscale GWR outputs
+
+Again, we have useful print output with `gwr.multiscale`:
+
+```{r}
+print(mod.MGWR.f2)
+```
+
+```{r}
+# Or could have used, for example:
+# mgwr.bwd.f
+# mod.MGWR.f2$GW.diagnostic
+# summary(mod.MGWR.f2$SDF)
+```
+
+Note: "GWR with Parameter-Specific Distance Metrics" in the print summary relates to an overarching multiscale GWR model.
+
+The estimated bandwidths are 558.6 m, 2472.3 m, 1080.8 m, 382.2 m and 3741.7 m, for the intercept, SOCgkg, SiltPC, NO3Ngkg and NH4Ngkg, respectively. This means that (given the maximum distance between sample points is 3742 m):
+
+1. The intercept varies at a local spatial scale of 558.6 m
+1. The relationship between TNPC and SOCgkg varies at a broad spatial scale of 2472.3 m
+1. The relationship between TNPC and SiltPC varies at a local-to-broad spatial scale of 1080.8 m
+1. The relationship between TNPC and NO3Ngkg varies at a local spatial scale of 382.2 m
+1. The relationship between TNPC and NH4Ngkg varies at a global scale of 3741.7 m and can be considered constant
+
+In comparison to the single bandwidth of 770 m estimated from standard GWR, multiscale GWR provides more interesting and likely more realistic bandwidths informing us on the spatial scale of each data relationship.
+
+The estimated multiscale GWR coefficient summaries (Minimum, 1st Quartile, Median, 3rd Quartile, Maximum) need to be compared with the single coefficient estimates from the OLS regression and the coefficient summaries from standard GWR. Observe that the local coefficients for SiltPC, NO3Ngkg and NH4Ngkg could change in sign with standard GWR, while multiscale GWR only estimated this for NO3Ngkg.
+
+Again, the multiscale GWR coefficients need mapping (except that for NH4Ngkg) (see Figures 5 and 6), where the spatial variation of the local coefficient estimates are given with their p-values < 0.05 highlighted (circled) for significance from zero. **NB** Actually the function extracts $t-values$ greater than 1.96 or less than -1.96:
+
+```{r, warning = F, message = F}
+# Multiscale GWR maps 
+p1m <- plot.gwr.coefs(mod.MGWR.f2$SDF, "Intercept", mod.MGWR.f2$SDF$Intercept_TV)
+p2m <- plot.gwr.coefs(mod.MGWR.f2$SDF, "SOCgkg", mod.MGWR.f2$SDF$SOCgkg_TV)
+p3m <- plot.gwr.coefs(mod.MGWR.f2$SDF, "SiltPC", mod.MGWR.f2$SDF$SiltPC_TV)
+p4m <- plot.gwr.coefs(mod.MGWR.f2$SDF, "NO3Ngkg", mod.MGWR.f2$SDF$NO3Ngkg_TV)
+```
+```{r, fig.cap = "Multiscale GWR coefficient maps for SOC and % Silt", warning=F, message=F}
+tmap_arrange(p2m, p3m, ncol=2)
+```
+```{r, fig.cap = "Multiscale GWR coefficient maps for NO3N and the intercept", warning=F, message=F}
+tmap_arrange(p4m, p1m, ncol=2)
+```
+
+Interpretation of the coefficient maps (Figures 5 and 6) are as follows:
+
+1. TNPC's relationship to 3 of the 4 predictors is spatially heterogeneous.
+1. TNPC's relationship to SOCgkg consists of only positive local relationships which are significant everywhere.
+1. TNPC's relationship to Silt_PC consists of only positive local relationships which are significant everywhere.
+1. TNPC's relationship to NO3Ngkg can be both significantly negative and significantly positive.
+1. The local intercept varies across space and is significant everywhere.
+
+**Task**: compare the coefficient maps given in Figures 5 and 6, to those given in Figures 2 to 4 (for standard GWR). What differences can you see?
+
+## 4. Model fit: OLS regression vs standard GWR vs multiscale GWR
+
+Again, the key diagnostic for model fit comparisons are the AICc values:
+
+1. OLS regression = 1121.963
+1. Standard GWR = 1067.15
+1. Multiscale GWR = 1048.402
+
+For completeness, the R-squared values are:
+
+1. OLS regression = 0.61
+1. Standard GWR = 0.70
+1. Multiscale GWR = 0.71
+
+Thus multiscale GWR provides the most parsimonious model, as it has the lowest AIC.
+
+We can also investigate model fit through residual summaries - i.e. globally - and also locally through mapping the residuals from the OLS regression, standard GWR and multiscale GWR fits (Figure 7):
+
+```{r}
+summary(mod.OLS$residuals) # OLS residuals
+summary(mod.GWR.f$SDF$residual) # Standard GWR
+summary(mod.MGWR.f2$SDF$residual) # Multiscale GWR
+```
+
+```{r}
+df_sp@data$residual.1 <- mod.OLS$residuals
+df_sp@data$residual.2 <- mod.GWR.f$SDF$residual
+df_sp@data$residual.3 <- mod.MGWR.f2$SDF$residual
+```
+
+Again redefine the mapping function from previous sessions:
+```{r,tidy=FALSE}
+quick.map <- function(spdf,var,legend.title,main.title, dot.size = 0.2) {
+  if (class(spdf) == "SpatialPointsDataFrame"){
+  p = tm_shape(spdf)+
+      tm_dots(var, title = legend.title, size = dot.size)+
+      tm_layout(title = main.title, legend.title.size =0.9)
+  }
+  if (class(spdf) == "SpatialPolygonsDataFrame"){
+  p = tm_shape(spdf)+
+      tm_fill(var, title = legend.title)+
+      tm_layout(title = main.title, legend.title.size =0.9)
+  }
+  return(p)
+}
+```
+
+
+```{r, fig.cap = "Residuals from OLS regression, standard GWR and multiscale GWR.", warning=F, message=F}
+Map.1 <- quick.map(df_sp,var="residual.1","Residuals","OLS regression")
+Map.2 <- quick.map(df_sp,var="residual.2","Residuals","Standard GWR")
+Map.3 <- quick.map(df_sp,var="residual.3","Residuals","Multiscale GWR")
+tmap_arrange(Map.1, Map.2, Map.3, ncol = 3)
+```
+
+Again, multiscale GWR performs relatively well, but has a different bias to that found with standard GWR.
+
+Observe we have not included the REML regression results, but its AIC value can be judged at 1078.963 (as Session 6 used a slightly different AIC calculation) and the R-squared value = 0.60. The residuals from the REML regression would be little different to that found with the OLS regression.
+
+## 5. Summary
+
+In session 6, we took you through OLS and REML regressions for modelling with or with spatial autocorrelation effects. Clearly these effects can sometimes, but not always be important - commonly depending on the nature and amount of the predictor variables. Further, for the same model of this session (i.e. soil Total Nitrogen `TNPC` as a function of 4 `SOCgkg`, `NO3Ngkg`, `NH4Ngkg` and `SiltPC`), spatial autocorrelation effects with a REML regression only realistically improved inference in terms of model fit.
+
+In this section, we investigated a different spatial dependence in the form of a regression's coefficients. Here regressions with spatial heterogeneity effects (GWR and multiscale GWR) uncovered important spatial characteristics of the soils process that would otherwise go unnoticed with a REML regression only. In particular, multiscale GWR provided vital information on the spatial scale of each regression relationship, in addition to how these relationships may vary spatially.
+
+Lu et al. (2014) and Gollini at al. (2015) provide an overview of GWR models and provide a thorough treatment demonstrating their use, including the steps for model selection, bandwidth / kernel size optimisation, handling local collinearity, robust fits, various *significance* tests and the use of GWR as a spatial prediction model (so can directly compare with kriging - Session 4). These reference papers also describe other GW models not based on regression, such as a GWPCA. The current release of the `GWmodel` also includes additional capabilities, such as *space-time* GWR and *scalable* GWR for massive data sets.
+
+## Tasks
+
+1. Try repeating the above exercises with `TPPC` instead of `TNPC` as the response variable. Suggest trying this with `TPPC` square-root transformed.
+1. Experiment with different kernel functions and also using *adaptive* rather than *fixed* bandwidths.
+
+## References
+
+Brunsdon, C., Fotheringham, A.S., Charlton, M., 1996. Geographically Weighted Regression: A Method for Exploring Spatial Nonstationarity. *Geographical Analysis* 28: 281-298.
+
+Brunsdon, C., Fotheringham, A.S., Charlton, M. 1999. Some Notes on Parametric Significance Tests for Geographically Weighted Regression. *Journal of Regional Science*, 39, 497-524.
+
+Comber, A., Wang, Y., Lu, Y., Zhang, X. and Harris, P., 2018. Hyper-local geographically weighted regression: extending GWR through local model selection and local bandwidth optimization. *Journal of Spatial Information Science*, 2018(17), pp.63-84.
+
+Fotheringham, A.S., Brunsdon, C., Charlton, M. 2002. *Geographically Weighted Regression: The Analysis of Spatially Varying Relationships*. Wiley, New York.
+
+Fotheringham, A. S., Yang, W., Kang, W. 2017. Multiscale geographically weighted regression (mgwr). *Annals of the American Association of Geographers*, 107 (6), 1247-1265.
+
+Gollini, I., Lu, B., Charlton, M., Brunsdon, C., Harris, P. 2015. GWmodel: an R Package for exploring Spatial Heterogeneity using Geographically Weighted Models. *Journal of Statistical Software* 63(17): 1-50
+
+Harris, P., Brunsdon, C., Charlton, M. 2011. Geographically weighted principal components analysis.  *International Journal of Geographical Information Science* 25 (10): 1717-1736
+
+Harris, P., Brunsdon, C., Lu, B., Nakaya, T., Charlton, M. 2017. Introducing bootstrap methods to investigate coefficient non-stationarity in spatial regression models. *Spatial Statistics* 21: 241-261
+
+Harris, P., 2019. A simulation study on specifying a regression model for spatial data: choosing between heterogeneity and autocorrelation effects. *Geographical Analysis* 51: 151-181
+
+Leong, Y.Y., Yue, J.C., 2017. A modification to geographically weighted regression. *International Journal of Health Geographics*, 16 (1), 11.
+
+Lu, B., Harris, P., Charlton, M., Brunsdon, C. 2014. The GWmodel R Package: further topics for exploring Spatial Heterogeneity using Geographically Weighted Models. *Geo-spatial Information Science* 85(17): 85-101
+
+Lu, B., Brunsdon, C., Charlton, M., Harris, P. 2017 Geographically weighted regression with parameter-specific distance metrics. *International Journal of Geographical Information Science*, 31 (5), 982-998.
+
+Wang, Y., Zhang, X. and Huang, C., 2009. Spatial variability of soil total nitrogen and soil total phosphorus under different land uses in a small watershed on the Loess Plateau, China. *Geoderma*, 150(1-2), pp.141-149.
+
+
+

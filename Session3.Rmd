@@ -1,0 +1,596 @@
+---
+title: "Session 3: Exploratory Spatial Data Analysis (ESDA)"
+author: "Lex Comber and Paul Harris"
+date: "November 2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+\tableofcontents
+
+## Overview
+
+This session covers the following topics:
+
++ EDA of spatial properties with local summary statistics
++ EDA of spatial properties with a local Indicator of Spatial Association (LISA) statistic 
++ Consideration of the Modifiable Areal Unit Problem (or MAUP)
+
+All of the work in this session is informed by 2 important but frequently overlooked considerations when working with spatial data: 
+
+1. Many processes (as for example, those captured by observations) are spatially clustered: a measurement at one location will be similar to that of neighbouring observations. Values are frequently clustered in hotspots with the result that the measurements are *spatially autocorrelated*. Specifically, spatial autocorrelation deals with spatial dependence in the *observations*, but it is also possible to investigate for spatial dependence in *statistical summaries* of the observations (and in turn, statistical models themselves), where this latter concept is commonly referred to as *spatial heterogeneity* (or *spatial non-stationarity*). Both spatial effects (*autocorrelation* and *heterogeniety*) violates many of the assumptions that underpin classic statistical analysis, which for regression modelling are investigated in later in the workshop. These effects also suggest that geography or location (easting and northing or latitude and longitude) cannot be treated as *just another variable* in a statistical models such as regression. This is Tobler's 1st Law of Geography (Tobler, 1970) which states that: 
+
+*> "Everything is related to everything else, but near things are more related to each other"*
+
+2. Spatial data are subject to the Ecological Fallacy or the Modifiable Areal Unit Problem (MAUP) when they are summarized over areas (Robinson, 1950; Openshaw 1984a, 1984b). This describes a widely recognised issue in geographical studies: that different data relationships (and therefore data structures) will exist when data are aggregated over different spatial scales.
+
+For the first consideration, we focus our attention with *spatial heterogeneity of process* - which can be handled by local (non-stationary) models such as those found in a Geographically Weighted (GW) Framework (Brunsdon et al 1996; 2002) (section 1). We also demonstrate that measures of spatial autocorrelation themselves can be explored locally using a LISA statistic (section 2), where a global measure of spatial autocorrelation (in a Moran’s I statistic) can itself be allowed to vary across-space. Core to these investigations are the mapping, interrogation and interpretation of the spatial outputs.
+
+The second consideration is illustrated in section 3 and highlights the impact of including geography in different ways into models (whether for prediction or inference) and the impact of the MAUP.
+
+The exercises in this session use the Liudaogou watershed data again, specifically both the point and the polygon format layer that was created in Session 2. Again a number of different packages will be used in this Session, some of which are new and may need to be installed: 
+
+```{r message=F, warning=F}
+library(GISTools)
+library(GWmodel)
+library(tmap)
+library(sf)
+library(spdep)
+library(dplyr)
+```
+Once again, remember to:
+
+1. Create a seperate folder for this Session
+1. Always write your code into an R script... **always**!
+1. Save the script to the folder
+1. Set the working directory to the folder location
+
+Having done that you should clear your workspace, create and load the 2 soils data files from Sessions 1 and 2. Note you will probably need to copy these over to the directory you are working from for this session:
+```{r}
+rm(list = ls())
+load("df_sf.RData")
+load("df_zone.RData")
+load("boundary.RData")
+```
+
+## 1. Exploratory *Spatial* Data Analysis with GW Summary Statistics 
+
+### 1.1 Introduction
+
+In Session 2, a number of summary statistics were generated both on a function by function basis and as part of piped commands.
+
+Such statistics are able to summarise data sets, with for example means and medians providing a measure of typicality, and standard deviations and inter quartile ranges (IQRs) indicating the spread around this. Generally these are useful - although not comprehensive - techniques for what is sometimes called 'data reduction' (Ehrenberg, 1981). They are useful because with only a small number of measures, it is possible to summarise typical values and distributions. 
+
+Geographically weighted summary statistics (GWSS) provide spatial versions of these measures, where statistics are calculated using only (weighted) data within a moving window, so that data distribution characteristics can be mapped allowing their spatial variations to be quantified. 
+
+As well as univariate (single variable) summaries, Session 2 also introduced bivariate summaries including correlation, as a measure of the degree to which two variables are linearly related. The most commonly used measure of this is the *Pearson Correlation Coefficient*. Again, the idea with a localised correlation is to use a moving window approach to see whether this linear relationship varies geographically - for example in some places `TNPC` may be more strongly correlated with `SOCgkg` than in others.
+
+### 1.2 Exploring Spatial Patterns with GWSS
+
+The `GWmodel` package provides a number of GW methods including GW versions of common summary statistics. 
+
+Geographically weighted summary statistics (GWSS) are generated using the `gwss` function in `GWmodel`. At the  moment, GWmodel functions require data to be in `sp` format (`SpatialPolygonsDataFrame` and `SpatialPointsDataFrame`). Additionally, a *bandwidth* needs to be specified to define the size of the the moving window. Here, a 1km bandwidth is used. A kernel weighting function also needs to be defined, but in this instance, the default bi-square kernel is used (see section 1.4).
+
+When using `gwss`, all of the statistics discussed above are returned in a single object - here stored in a variable called `gwss.res`. 
+
+```{r cache = T}
+# convert to sp format
+df_sp = as(df_sf, "Spatial")
+zone_sp = as(df_zone, "Spatial")
+# run the GWSS for zone
+gwss.res <- gwss(zone_sp,vars=c("TNPC", "SOCgkg"), bw=1000)
+```
+
+This object has a number of components.  The most important one is probably a spatial data frame (SDF) containing the results of the localised summary statistics for each location.  These are stored in `gwss.res1$SDF` - this itself is a `SpatialPolygonsDataFrame` - to access just the data frame component of it,  use the expression `data.frame(gwss.res$SDF)` - and to see just the first few observations, enter:
+
+```{r}
+head(data.frame(gwss.res$SDF))
+```
+
+Also, you can just enter: 
+```{r}
+gwss.res
+```
+To see an overview. A guide to the variable names is below:
+
+Variable Name    | Statistic Referred to        | Comments
+-----------------|--------------------------------|------------------------------------------
+X_LM             | GW Mean                        |
+X_LSD            | GW Standard deviation          |
+X_Lvar           | GW Variance                    | GW Standard deviation squared
+X_LSKe           | GW Skewness                    |
+X_LCV            | GW Coefficient of variation    | GW Standard deviation divided by GW Mean
+Cov_X.Y          | GW Covariance                  | Not discussed here
+Corr_X.Y         | GW Pearson Correlation         |
+Spearman_rho_X.Y | GW Spearman Correlation        |
+
+Note that `X` and `Y` should be replaced by the names of the actual variables being investigated.
+
+Next, the code below defines a small R function to produce a map of a GW summary statistic of your choice.
+
+```{r,tidy=FALSE}
+quick.map <- function(spdf,var,legend.title,main.title, dot.size = 0.2) {
+  if (class(spdf) == "SpatialPointsDataFrame"){
+  p = tm_shape(spdf)+
+      tm_dots(var, title = legend.title, size = dot.size)+
+      tm_layout(title = main.title, legend.title.size =0.9)
+  }
+  if (class(spdf) == "SpatialPolygonsDataFrame"){
+  p = tm_shape(spdf)+
+      tm_fill(var, title = legend.title)+
+      tm_layout(title = main.title, legend.title.size =0.9)
+  }
+  return(p)
+}
+```
+
+In short, the function does the following things:
+ 
+ 1. Extracts the GW summary statistic of interest from the `gwss` object
+ 2. Tests to see whether the data are Point or Polygons
+ 3. Draws the choropleth map of the variable
+ 4. Includes a legend
+ 5. Includes a title
+
+The function is called with values for the parameters it takes, with only `dot.size` being optional:
+
+```{r eval=FALSE}
+quick.map(gwss.object,variable.name,legend.title,main.map.title,dot.size)
+```
+
+The advantage of defining a function is that the entire map can now be drawn using a single command for each variable, rather than having to repeat those 5 steps each time. An example is in Figure 1, examining the local mean of `SOCgkg` as calculated above. 
+
+```{r, fig.cap = "Geographically weighted mean of Soil Organic Carbon."}
+quick.map(gwss.res$SDF,var = "SOCgkg_LM","Mean", "Local Mean")
+```
+
+Now, look at the local standard deviation and the local skewness as in Figure 2.
+
+```{r, fig.cap = "Geographically weighted Standard Deviation and Skewness of Soil Organic Carbon."}
+p1 = quick.map(gwss.res$SDF,"SOCgkg_LSD", "Std. Dev.", "Local Standard Deviation")
+p2 = quick.map(gwss.res$SDF,"SOCgkg_LSKe","Skewness","Local Skewness")
+tmap_arrange(p1, p2, ncol = 2)
+```
+
+Comparing figures side-by-side like this makes comparison easier - an idea strongly advocated by Edward Tufte (Tufte, 1983) - see http://www.edwardtufte.com/bboard/q-and-a-fetch-msg?msg_id=0000hv for example. Here, you can see the differences in spatial pattern between local skewness and local standard deviation very clearly. The two patterns differ notably.  One interesting trend in skewness is that there is a tendency for levels, not at, but around the north tip, to be greater - suggesting a region with a tendency to have an upper tail of locally high (possibly outlying) `SOCgkg` values. 
+
+Standard deviation seems to be largest in the north. It is perhaps worth noting that higher variance commonly occurs where higher values also occur - suggesting perhaps that variance is affected by the magnitude of the data values. To allow for this it may also be interesting to look at the relative variability as in Figure 3 - as seen in the local coefficient of variation (CoV) which locally re-scales the standard deviation by its local mean:
+
+```{r fig.cap = "Relative variation in SOCgkg using a geographically weighted coefficient of variation (CoV)."}
+quick.map(gwss.res$SDF,"SOCgkg_LCV","Coef. of Variation","Local Relative Variability")
+```
+
+It now seems that `SOCgkg` values are more variable just to the south of the northern tip than the north area itself, when considering the CoV.
+
+**Task**: modify the quick.map function above so that it takes a palette argument to allow alternatives to the default.
+
+Hint 1: you might start by playing with the following lines of code:
+```{r eval = F}
+tm_shape(spdf)+
+      tm_polygons(var, title = legend.title, palette = "Blues")+
+      tm_layout(title = main.title, legend.title.size =0.9)
+```
+
+Hint 2: you can examine Brewer palettes available to you - see Figure 4.
+```{r fig.height = 10, fig.cap = "The full list of palettes in the `RColorBrewer` package."}
+display.brewer.all()
+```
+
+The solution to this Task is at the end of this document.
+
+The final set of values that are returned by a `gwss` are the GW correlations. Mapping these shows how the pair-wise linear relationships between variables (of example, as shown in a scatterplot) vary spatially. The map shows in Figure 5 that there are distinct trends and spatial patterns in the variation of the correlations between these 2 variables - from very weak in the south to very strong in the west.
+
+```{r fig.cap = "Geographically weighted Pearson correlations between the TNPC and SOCgkg variables."}
+quick.map(gwss.res$SDF,"Corr_TNPC.SOCgkg","Correlation","Local Correlation")
+```
+
+### 1.3 Exploring Spatial Patterns with robust GWSS
+
+The mean,  standard deviation, skewness and correlation coefficient all have *robust* (or outlier-resistant) equivalents,  the median,  interquartile range,  and quantile imbalance.  These are robust in the sense that they are based on the sorted order of values and associated quantiles of the distribution. For univariate robust summary statistics, if we sort a variable in ascending order,  let the halfway point be $Q_2$, the first quarter point  be $Q_1$ and the third quarter point be $Q_3$,  then the median is $Q_2$, the interquartile range (IQR) is $Q_3 - Q_1$ and the quantile imbalance is:
+$$
+\frac{Q_3 - 2Q_2 + Q_1}{Q_3 - Q_1}
+$$
+The last one may be less familiar,  but it basically measures the difference between the first quartile and the median and the median and the second quartile - leading to a measure of lop-sidedness.  The 3 measures are seen as robust because one or two very high or very low values don't 'throw' the summary statistics,  since they won't alter the values of $Q_1$, $Q_2$ or $Q_3$.  Again,  these statistics can be geographically weighted.  
+
+Finally, the Spearman's rank correlation coefficient is a robust version of the Pearson correlation coefficient - to compute this,  each value of each variable is replaced  by its rank - the smallest value of the first variable is replaced by 1,  the next smallest by 2 and so on,  The same is then done for the second variable - and then the Pearson correlation coefficient is computed for these rank-based variables.
+
+The summary statistics that are geographically weighted in the `GWmodel` package are listed below:
+
+Statistic           | What it Measures | Robust? | Bivariate or Univariate
+--------------------|------------------|---------|------------------------
+Mean                | Overall Level    | No      | Univariate
+Standard Deviation  | Spread           | No      | Univariate
+Skewness            | Asymmetry        | No      | Univariate
+Median              | Overall Level    | Yes     | Univariate
+Interquartile Range | Spread           | Yes     | Univariate
+Quantile Imbalance  | Asymmetry        | Yes     | Univariate
+Pearson Correlation | Association      | No      | Bivariate
+Spearman Correlation| Association      | Yes     | Bivariate
+
+Robust GWSS are generated with the inclusion of the `quantile = T` parameter in the call to `gwss`:
+```{r cache = T}
+# robust GWSS for zones
+gwss.rob <- gwss(zone_sp,vars=c("TNPC", "SOCgkg"), bw=1000, quantile = T)
+```
+The outputs of the SDF can be compared:
+```{r}
+names(gwss.res$SDF)
+names(gwss.rob$SDF)
+```
+
+And the table of GWSS output variable names now includes:
+
+Variable Name    | Statistic Referred to          | Comments
+-----------------|--------------------------------|------------------------------------------
+X_Median         | GW median                      | Typicality
+X_IQR            | GW inter quartile range        | Spread
+X_QI             | GW Quantile Imbalance          | A measure imbalance around the median
+
+A map of geographically weighted medians can be produced and small multiples might also be a good way to compare this to the corresponding geographically weighted means. The code below generate Figure 6 and uses the full `tmap` syntax : 
+```{r fig.cap = "Geographically weighted Median and Mean of Soil Organic Carbon."}
+tm_shape(gwss.rob$SDF)+
+      tm_fill(c("SOCgkg_LM", "SOCgkg_Median"), title = c("Mean", "Median"))
+```
+
+Patterns are similar, although the median - which is less influenced by observations in the upper tail - has a central higher band rather than just a peak in the norther tip.  Also, more generally, the medians are lower than the means (look at the legends), which is to be expected in this case. 
+
+Finally, it is useful to examine the other two robust GWSS, the IQR and the quantile imbalance. The IQRs are quite similar to the standard deviations.  Quantile imbalance is perhaps rather different to skewness - although recall that this doesn't measure exactly the same thing as skewness. The code below generates Figure 7. Notice how a different palette was automatically selected by `tmap` within the function because of the values of the `SOCgkg_QI` variables flipping from negative to positive: 
+
+```{r, message = F, warning = F, message = F, fig.cap = "Maps of the local Soil Orgainc Carbon IQRs and Quantile Imbalances."}
+p1 = quick.map(gwss.rob$SDF,"SOCgkg_IQR","IQR","Local IQR")
+p2 = quick.map(gwss.rob$SDF,"SOCgkg_QI","QI","Local Quantile Imbalance")
+tmap_arrange(p1,p2, ncol = 2)
+```
+
+### 1.4 GWSS considerations
+
+The way that geographically weighted summary statistics operates is effectively to create interpolations of data summaries: it finds smoothed data summaries using spatially-weighted data falling under a kernel at each location. Thus, the choice of the shape and size (bandwidth) of the kernel are critical issues in *how* the summary statistics are generated and *what* they show. In this exploratory context, there are no clear rules here. Rules of thumb (heuristics) can be used where (at least in the first instance) you should aim for a kernel bandwidth that is between a 1/3 and 2/3 of the data. In this case, a bandwidth of 1000m was specified, in the context of ~3.5km as the maximum distance between data points / areas in the study area:
+
+```{r eval = F}
+max(dist(st_coordinates(df_sf)))
+```
+
+Additionally, the default bi-square kernel was used and different kernel shapes (functions) will weight data differently. The help for the `gwss` function indicates some of these and they are also described in detail in Gollini et al (2015).
+
+The code snippet below illustrates the impacts of these choices by comparing 2 kernels and 2 bandwidths:
+
+```{r cache = T}
+# 1. the original GWSS
+gwss.1 <- gwss(zone_sp,vars=c("TNPC", "SOCgkg"), bw=1000)
+# 2. with a larger bandwidth
+gwss.2 <- gwss(zone_sp,vars=c("TNPC", "SOCgkg"), bw=1500)
+# 3. with gaussian kernel
+gwss.3 <- gwss(zone_sp,vars=c("TNPC", "SOCgkg"), bw=1000, kernel = "gaussian")
+# 4. with a larger bandwidth and a gaussian kernel
+gwss.4 <- gwss(zone_sp,vars=c("TNPC", "SOCgkg"), bw=1500, kernel = "gaussian")
+```
+
+The outputs can be mapped, here comparing the geographically weighted means of `SOCgkg` as in Figure 8:
+
+```{r fig.height = 7, warning = F, message = F, fig.cap = "The effects of bandwidth size and kernel shape."}
+p1 = quick.map(gwss.1$SDF,"SOCgkg_LM","","bw=1000, \nbi-square")
+p2 = quick.map(gwss.2$SDF,"SOCgkg_LM","","bw=2000, \nbi-square")
+p3 = quick.map(gwss.3$SDF,"SOCgkg_LM","","bw=1000, \ngaussian")
+p4 = quick.map(gwss.4$SDF,"SOCgkg_LM","","bw=2000, \ngaussian")
+tmap_arrange(p1,p2,p3,p4, ncol = 2)
+```
+
+These concepts are also discussed further in later sessions, including session 7, in the context of geographically weighted regression. Later sessions include the use of automatically (objectively) found bandwidths (which incidentally, can be also found for many GWSS, but are not so commonly applied, see Harris et al. 2014).
+
+## 2. Exploratory *Spatial* Data Analysis with a LISA statistic
+
+One of the key things that makes considerations of spatial or geographic data different from just data is *Spatial Autocorrelation*. Spatial autocorrelation is said to occur when nearby measurements have similar values. This is a way in which spatial data are sometimes different from other data, and it suggests that standard models used for other data (e.g. those based on standard regression) are not always appropriate. In particular, many statistical tests and models are based on the assumption that each observation in a set of measurements is *independent* of others. And in regression, it is specifically, the *error or residual* that is assumed independent (see session 6). These assumptions are often violated in reality. 
+
+### 2.1 Adjacency 
+
+In order to computer some measure of autocorrelation some information about nearness or adjacency is needed: for example what counties are adjacent to, or neighbouring, what other counties. 
+
+Neighbours can be defined in several ways, but a common definition is that a pair of counties (or other polygons in other examples) which share some part of their boundaries are neighbours. If this is the "queen's case" definition, then even a pair of counties meeting at a single corner point are considered neighbours. The more restrictive "rook's case" requires that the common boundary must be a linear feature.
+
+Neighbour lists of either case can be extracted using the `poly2nb` function in the `spdep` package. These are stored in an `nb` object – basically a list of neighbouring polygons for each polygon. It takes the `sp` class of polygon objects not sf.
+
+```{r}
+library(spdep)
+zone.nb <- poly2nb(zone_sp) 
+zone.nb
+```
+
+As seen in the code block above, printing out an `nb` object lists various characteristics, such as the average number of neighbours each polygon has – in this case 5.69. Note that in the default situation, Queen’s case neighbours are computed. To compute the Rook’s case, the optional argument `queen=FALSE` can be added to the call to `poly2nb`.
+
+It is also possible to plot an `nb` object – this represents neighbours as a network. First, it is turned into a `SpatiaLinesDataFrame` object by `nb2lines`, a function in `spdep`. The lines join the centroids of the polygons regarded as neighbours, and may be plotted as a map. The centroid locations are provided by the coordinates function. One further thing to note is that by default, `nb2lines` sets the projection of the result to `NA`. This is overwritten using the `proj4string` function to set it to the original data. The map of contiguities is shown in Figure 9.
+
+```{r warning = F, message = F,  fig.cap = "A map of the areas (in grey) and their adjacencies defined by a Queen's case contiguity."}
+# create a SpatialLinesDataFrame showing Queen's case contiguities
+zone.net <- nb2lines(zone.nb,coords=coordinates(zone_sp)) 
+# default projection is NA: change this as below
+proj4string(zone.net) = proj4string(zone_sp)
+# create the map
+library(tmap)
+tm_shape(zone_sp) + tm_borders(col='lightgrey') + 
+  tm_shape(zone.net) + tm_lines(col='red')
+```
+
+Figure 10 shows some detail and plots the 100th area in `zone_sp` object and its neighbours by way of example:
+```{r eval = T, fig.cap = "Detail of the adjacency network."}
+tm_shape(zone_sp[zone.nb[[100]],]) + tm_polygons(borders = "black")+
+  tm_shape(zone_sp[100,]) + tm_polygons("dodgerblue")+
+  tm_shape(zone.net) + tm_lines(col='red')+
+  tm_shape(zone_sp) + tm_dots(col='red', size = 1.5)+
+  tm_layout(frame = F)
+```
+
+### 2.2 Moran's I
+
+Recall the maps from Session 2. Many of these suggested a degree of `spatial autocorrelation` - i.e. nearby zones or points tended have similar value - put simply, the values were spatially clustered.
+
+Chapter 7 of Brunsdon and Comber (2018) describes how to undertake a spatially lagged mean plot (essentially a neighbourhood smoothing) but here we are specifically interested in measuring the dependency between  pairs of adjacent, neighbouring values  (i.e. spatial autocorrelation). This is the tendency values of nearby observations (areas) to be related. It is similar to the a-spatial correlation coefficient, but is not a correlation between *two variables*, but is instead a correlation of *one variable with itself* through data pairs separated by some measure of 'nearness' (hence the prefix 'auto'). One such measure is the Moran’s I coefficient (Moran, 1950), defined by:
+
+\[
+I = \frac{n}{\sum_i \sum_j w_{ij}} \frac{\sum_i \sum_j w_{ij} (z_i - \bar{z}) (z_j - \bar{z})}{\sum_i (z_i - \bar{z})^2}
+\label{morani}
+\]
+
+where $w_{ij}$ is the $i,j$th element of a weights matrix $\mathbf{W}$,  specifying the degree of dependency between polygons $i$ and $j$. 
+
+The package `spdep` provides functions to evaluate Moran’s I for a given dataset and $\mathbf{W}$, the weight matrix. It is sometimes more effective to store the $\mathbf{W}$ matrix in `listw` form – and this is done for the computation of Moran’s I here. The function used to compute Moran’s I is called `moran.test` and can be used as below, for example to assess spatial dependence in ammonium (`NH4Ngkg`):
+```{r}
+# compute listw from nb object
+zone.lw = nb2listw(zone.nb)
+moran.test(zone_sp$NH4Ngkg,zone.lw) 
+```
+
+The above code supplies more than the actual Moran’s I estimate itself – but for now note that the value is about 0.375 for the NH4Ngkg attribute.
+
+This is fine, but one problem is deciding whether the above value is sufficiently high to suggest that an autocorrelated process model is a plausible alternative to an assumption that the data are independent. There are two issues here:
+
+1. Is this value of $I$ a relatively large level on an absolute scale?
+2. How likely is the observed $I$ value, or a larger value, to be observed if the rates were independent?
+
+The first of these is a benchmarking problem. Like correlation, Moran’s I is a dimensionless property – so that, for example, with a given set of polygons and associated  matrix, area-normalised rates of rainfall would have the same Moran’s I regardless of whether rainfall was measured in millimetres or inches. However, while standard correlation is always restricted to lie within the range [ 1, 1], making, say, a value of 0.8 reasonably easy to interpret, the range of Moran’s I varies with the $\mathbf{W}$ matrix. The function below determines the range of possible I values for any given `lw` object: 
+```{r}
+moran.range <- function(lw) {
+  wmat <- listw2mat(lw)
+  return(range(eigen((wmat + t(wmat))/ 2) $values))
+  } 
+moran.range(zone.lw)
+```
+Here, Moran’s I can range between  -0.571 and 1.010. Thus on an absolute scale the reported value suggests a reasonable degree of spatial autocorrelation: i.e. that ammonium values (`NH4Ngkg`) **are** spatially clustered. 
+
+### 2.3 LISA - a Local Moran's I
+
+The value of $I$ above is a **global** (or **stationary**) value - it summarises the whole study area. In reality, ammonium values (`NH4Ngkg`) in some regions of the study area may be more clustered than others. Anselin (1995) proposed the idea of local indicators of spatial association (LISAs). He states two requirements for a LISA:
+
++ The LISA for each observation gives an indication of the extent of significant spatial clustering of similar values around that observation
++ The sum (or mean) of LISAs for all observations is proportional to its global indicator of spatial association
+
+It should be possible to apply a statistical test to the LISA for each observation, and thus test whether the local contribution to clustering around observation is significantly different from zero. This provides a framework for identifying localities where there is a significant degree of spatial clustering (or repulsion). A good example of a LISA may be derived from the Moran’s I index.
+
+This uses the mean neighbourhood values of adjacent polygons to detect clustering $I_i$  =  a local measure of clustering. It can also indicate repulsion when $I_i$ is a large negative value and if the magnitude is not particularly large (for either positive or negative values) this suggests that there is little evidence for either clustering or repulsion. Finally for each $I_i$, a significance test may be carried out against a hypothesis of no spatial association. 
+
+The code snippets below undertake this:
+
+1. Compute the local  Moran's I and map the result as in Figure 11.
+```{r warning = F, message = F, fig.cap = "Measures of the local Moran's I for ammonium (NH4Ngkg)."}
+zone_sp$lI <- localmoran(zone_sp$NH4Ngkg,zone.lw)[, 1] 
+tm_shape(zone_sp) +
+  tm_polygons(col= 'lI',title= "Local Morans I",
+              legend.format=list (flag= "+"),  midpoint = 0) +
+  tm_style('col_blind') +
+  tm_layout(legend.position = c("left", "top"))  
+``` 
+
+The map shows there is some evidence for both positive and negative $I_i$ values. However, it is useful to consider the $p-values$ for each of these values. 
+
+2. Compute the $p-values$
+
+$p-values$ are calculated and mapped below. In this case a manual shading scheme is used, based on conventional *critical* p-values (i.e. one in which the shading interval breaks are specified directly).
+
+```{r}
+# Create the local p values
+zone_sp$pval <- localmoran(zone_sp$NH4Ngkg,zone.lw)[, 5]
+```
+The $p-values$ can be plotted as in Figure 12. Here the palette has been selected manually, via the `palette` parameter. The minus sign in front of `Greens` signifies that the palette is used in reverse order (higher numbers are lighter) to reflect the fact that lower $p-values$ are more important.
+
+```{r warning = F, message = F, fig.cap = "The $p-values$ for the local Moran's I for ammonium (NH4Ngkg)."}
+# Draw the map
+tm_shape(zone_sp) +
+  tm_polygons(col= 'pval',title= "p-value",breaks= c(0, 0.01, 0.05, 0.10, 1), 
+              palette = "-Greens") +
+  tm_layout(legend.position = c("left", "top")) 
+```
+
+From the resultant map, a number of places can be seen where the p-value is notably low and significant (e.g. in specific sub-regions of the study area) – suggesting the possibility of a cluster of either high or low values. 
+
+This part of the practical was drawn from Chapter 7 in Brunsdon and Comber (2018), *Spatial Attribute Analysis with R*. This provides a theoretical background to autocorrelation so please only have a light read and play with some of the code which can be accessed from https://bookdown.org/lexcomber/brunsdoncomber2e/Ch7.html.
+
+Observe that GW measures of spatial autocorrelation are also possible (Harris et al. 2010), but where such GW measures do not have the same two requirements, as stated above, for them to be a LISA. Thus GW measures and LISAs are different in concept. 
+
+## 3. The Modifiable Areal Unit Problem (MAUP)
+
+One key issue associated with spatial analysis, is the need for critical consideration of the Ecological Fallacy (Robinson, 1950) and its manifestation in spatial data, the Modifiable Areal Unit Problem or MAUP (Openshaw, 1984a, 1984b). This has long been identified as an issue,  but is frequently unreported, overlooked or even ignored. Climate modelling provides a great example of this. In outline, the MAUP posits that statistical relationships, trends and correlations trends may exhibit very different properties when data are aggregated or brought together over different reporting units at different scales.
+
+The MAUP describes the distortion of rate calculations and their impact on statistical analyses whether aimed at prediction or inference. The MAUP results in differences in outcomes when data or processes are summarised in some way over different spatial units, which are then used as inputs to a model. The model outputs will vary when constructed from data aggregated over different areal units because of differences in ***scale*** that drive the aggregation. Openshaw's original publication on the MAUP can be downloaded from http://www.qmrg.org.uk/catmog/index.html. 
+
+To illustrate the MAUP, we will undertake a simple linear regression analysis of the data, then do the same with the data aggregated over a 250m grid and a 500m grid. The differences in results highlight the impact of the MAUP.
+
+First, create the grids
+```{r}
+sfc = st_make_grid(boundary, 250)
+g250 = data.frame(GridID = 1:length(sfc))
+st_geometry(g250) = sfc
+sfc = st_make_grid(boundary, 500)
+g500 = data.frame(GridID = 1:length(sfc))
+st_geometry(g500) = sfc
+```
+
+And we can examine the grids that are created in Figure 13:
+```{r fig.cap = "Aggregation grids: 250m (left) and 500m (right)."}
+p1 = tm_shape(g250) + tm_borders("lightgrey")+ tm_shape(df_sf) + tm_dots(size = 0.02)
+p2 = tm_shape(g500) + tm_borders("lightgrey")+ tm_shape(df_sf) + tm_dots(size = 0.02)
+tmap_arrange(p1,p2, nrow = 1)
+```
+
+Next we need to prepare and then aggregate the data over the grids. This normalises the data in the  same way as Wang et al (2009) and Comber et al (2019).
+
+```{r}
+df_sf$TNPC <- log(df_sf$TNPC+0.0001)
+df_sf$TPPC <- (df_sf$TPPC)^0.5
+df_sf$SOCgkg <- log(df_sf$SOCgkg)
+df_sf$ClayPC <- (df_sf$ClayPC)^0.5
+df_sf$NO3Ngkg <- log(abs(df_sf$NO3Ngkg))
+df_sf$NH4Ngkg <- log(df_sf$NH4Ngkg)
+```
+
+
+```{r warning = F,message=F }
+g250 %>% st_intersection(df_sf) %>%
+  st_drop_geometry() %>%
+  group_by(GridID) %>%
+  summarise(TNPC = mean(TNPC), 
+         SOCgkg = mean(SOCgkg),
+         ClayPC = mean(ClayPC),
+         SiltPC = mean(SiltPC),
+         SandPC = mean(SandPC),
+         NO3Ngkg = mean(NO3Ngkg),
+         NH4Ngkg = mean(NH4Ngkg)) %>% 
+  ungroup() -> tmp
+g250  %>% left_join(tmp) %>% st_intersection(boundary) -> g250
+```
+
+And we can examine the results as in Figure 14:
+```{r warning= F, message=F, fig.cap = "The orginal data (left) and data aggregated over a 250m grid (right)."}
+p1 = tm_shape(boundary) +tm_polygons()+ 
+  tm_shape(df_sf) + tm_dots("SOCgkg", size = 0.2)+ 
+  tm_layout(legend.position = c("right", "bottom"))+
+  tm_shape(boundary) +tm_borders()
+p2 = tm_shape(g250) + tm_polygons("SOCgkg") + tm_shape(boundary) +tm_borders()
+tmap_arrange(p1, p2, ncol = 2)
+```
+
+You should copy, paste and modify the code above so that it does the same thing for the `g500` layer.
+
+```{r echo = F, warning = F,message=F }
+g500 %>% st_intersection(df_sf) %>%
+  st_drop_geometry() %>%
+  group_by(GridID) %>%
+  summarise(TNPC = mean(TNPC), 
+         SOCgkg = mean(SOCgkg),
+         ClayPC = mean(ClayPC),
+         SiltPC = mean(SiltPC),
+         SandPC = mean(SandPC),
+         NO3Ngkg = mean(NO3Ngkg),
+         NH4Ngkg = mean(NH4Ngkg)) %>% 
+  ungroup() -> tmp
+g500  %>% left_join(tmp) %>% st_intersection(boundary) -> g500
+```
+
+We will now undertake 3 simple regressions using the 3 data layers: `df_sf`, `g250` and `g500`:
+```{r}
+lm1 = lm(TNPC ~SOCgkg+ClayPC+SiltPC+SandPC+NO3Ngkg+NH4Ngkg, data = df_sf)
+lm2 = lm(TNPC ~SOCgkg+ClayPC+SiltPC+SandPC+NO3Ngkg+NH4Ngkg, data = g250)
+lm3 = lm(TNPC ~SOCgkg+ClayPC+SiltPC+SandPC+NO3Ngkg+NH4Ngkg, data = g500)
+```
+
+These can be inspected in the usual way:
+```{r eval = F}
+summary(lm1)
+summary(lm2)
+summary(lm3)
+```
+And you will notice that different factors are significant, the $R^2$ increases with aggregation, but critically the coefficient estimates are radically different, and thus our process understanding changes with scale (the support). For example examine the change in sign for `ClayPC` and `SandPC` and the change in values of others.
+
+The code below creates a table to show this (Table 4):
+
+```{r eval = F}
+Points = summary(lm1)$coefficients[,1]
+Grid250 = summary(lm2)$coefficients[,1]
+Grid500 = summary(lm3)$coefficients[,1]
+df = data.frame(Points, Grid250, Grid500)
+round(df, 3)
+```
+```{r echo = F}
+Points = summary(lm1)$coefficients[,1]
+Grid250 = summary(lm2)$coefficients[,1]
+Grid500 = summary(lm3)$coefficients[,1]
+df = data.frame(Points, Grid250, Grid500)
+knitr::kable(round(df, 3), booktabs = F,
+              caption = 'The different coefficient estimates from data aggregated over different scales.') 
+```
+
+Thus, there are some key considerations when summarising data over grids. The first assumption is whether the grid is at an appropriate scale over which to summarize data. This is a key consideration if this binned data is to be used for subsequent statistical analysis, because of the MAUP. It is rarely described in much of the literature that works with spatial data. The basic idea is that if data are aggregated over different units then the observed patterns and relationship between variables will change with the changes in scaling, sometime in unexpected ways. 
+
+This means that the observed patterns, processes and inference may well change if a different scaling was used. Choices about the appropriate scale of observation  should be made with an understanding of the scales over which the processes being examined operate and they should be explicitly reported. 
+
+## 4. Summary
+
+Geography *is* an important consideration in data analysis, and one that has been frequently overlooked in much data science. Explicit and implicit inclusion of geography can improve models both to support prediction and inference / process understanding. At the same time locational and geographical data properties need to be handled in an informed way, not only in a statistical sense (for which there is a long established literature), but also in the interpretation and application of model outputs.
+
+The three key considerations are: 
+
+1. *Spatial Autocorrelation* in which measurements at one location will be similar to that of neighbouring observations. The lack of independence between variables violates many of the assumptions that underpin classic statistical analysis.
+
+2. *Spatial Heterogeneity* in which statistics/model parameters are not fixed but instead vary spatially. Here stationary model decisions or assumptions (common to many classical statistical analyses) need to be replaced with non-stationary ones.
+
+3. Spatial data are subject to the Ecological Fallacy or the *Modifiable Areal Unit Problem (MAUP)* when they are summarized over areas. Decisions about spatial aggregation scales will result in different inferential and predictive models.
+
+## 5. Answers to task
+
+> "modify the function above so that it takes a palette argument to allow alternatives to the default."
+```{r}
+quick.map2 <- function(spdf, var, legend.title, main.title, 
+                    palette = "Reds", dot.size = 0.2) {
+  if (class(spdf) == "SpatialPointsDataFrame"){
+  p = tm_shape(spdf)+
+      tm_dots(var, title = legend.title, palette = palette, size = dot.size)+
+      tm_layout(title = main.title, legend.title.size =0.9)
+  }
+  if (class(spdf) == "SpatialPolygonsDataFrame"){
+  p = tm_shape(spdf)+
+      tm_fill(var, title = legend.title, palette = palette)+
+      tm_layout(title = main.title, legend.title.size =0.9)
+  }
+  return(p)
+}
+```
+
+Test it:
+```{r eval = F}
+quick.map2(gwss.res$SDF,"SOCgkg_LCV","Coef of Variation",
+           "Local Scaled Variability", palette = "Greens")
+```
+
+## References
+
+Anselin, L. 1995. Local indicators of spatial association – LISA. *Geographical Analysis*, 27: 93–115.
+
+Brunsdon C and Comber L 2018. *An Introduction to R for Spatial Analysis and Mapping* (2nd edition), Sage, 336 pages
+
+Brunsdon, C. Fotheringham, S. Charlton, M. 2002. *Geographically Weighted Summary Statistics*, Computers, Environment and Urban Systems, 26:6, 501–524, 2002
+
+Comber, A., Wang, Y., Lü, Y., Zhang, X. and Harris, P. 2018. Hyper-local geographically weighted regression: extending GWR through local model selection and local bandwidth optimization. *Journal of Spatial Information Science*, 17:63-84.
+
+Ehrenberg, A. *Data Reduction*, John Wiley, Chichester, 1981. Reprinted in the *Journal of Empirical Generalisations in Marketing Science*, 5, 1–391, 2000 (www.empgens.com).
+
+Gollini, I., Lu, B., Charlton, M., Brunsdon, C., Harris, P. 2015. GWmodel: an R Package for exploring Spatial Heterogeneity using Geographically Weighted Models. *Journal of Statistical Software* 63(17): 1-50
+
+Harris, P., Charlton, M., Fotheringham, A.S. 2010. Moving window kriging with geographically weighted variograms.  *Stochastic Environmental Research and Risk Assessment* 24: 1193-1209
+
+Harris, P., Clarke, A., Juggins, S., Brunsdon, C., Charlton, M. 2014. Geographically weighted methods and their use in network re-designs for environmental monitoring. *Stochastic Environmental Research and Risk Assessment* 28: 1869-1887
+
+Moran, P. 1950. Notes on continuous stochastic phenomena. *Biometrika*, 37:17–23.
+
+Openshaw, S. 1984a. *The modifiable areal unit problem*. Catmog 38, Norwich.
+
+Openshaw, S., 1984b. Ecological fallacies and the analysis of areal census data. *Environment and Planning A*, 16(1), pp.17-31.
+
+Robinson WS 1950. Ecological Correlations and the Behavior of Individuals. *American Sociological Review*, 15(3): 351–357.
+
+Tobler, W.R., 1970. A computer movie simulating urban growth in the Detroit region. *Economic Geography*, 46(sup1), pp.234-240.
+
+Tufte, E. *The Visual Display of Quantitative Information*, Graphics Press, 1983
+
+Wang, Y., Zhang, X., and Huang, C. 2009. Spatial variability of soil total nitrogen and soil total phosphorus under different land uses in a small watershed on the Loess Plateau, China. *Geoderma* 150, 1-2, 141–149
+

@@ -1,0 +1,674 @@
+---
+title: "Session 4: Geostatistical Analysis"
+author: "Paul Harris and Lex Comber"
+date: "December 2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+\tableofcontents
+
+## Overview
+
+The modelling objectives of a geostatistical analysis can generally be attributed to one of the following:
+
+1.	Estimation of spatial dependence (or structure/continuity/correlation) via the semivariogram
+2.	Prediction of unobserved variables and estimating associated measures of prediction uncertainty via kriging.
+3.	Simulation of variables.
+4.	Spatial design issues such as the optimal location of future sample sites.
+
+This session will provide an introduction to objectives 1 to 3 using the `gstat` package. This package is the most comprehensive for a geostatistics, but there also exists many alternatives, as given here: https://cran.r-project.org/ under *Task views* then *Spatial*.
+
+You will be working with the classic `meuse` soils data set available with the `gstat` package (as used in Session 1 of this workshop). It comprises data on four heavy metals measured in the top soil in a flood plain along the river Meuse in The Netherlands, along with a handful of predictors variables (i.e. explanatory variables or covariates). The process governing heavy metal distribution appears to involve transport of polluted sediment by the river, and subsequent deposition mostly close to the river bank, and areas with low elevation.
+
+Through the `gstat` package, this session will introduce you to: 
+
+(i) spatial interpolation with inverse distance weighting (IDW)
+(ii) variogram estimation and modelling
+(iii) spatial interpolation and prediction using different types of kriging, and 
+(iv) geostatistical simulation.
+
+We will also again look at different mapping functions, re-capping work in previous workshop sessions.
+
+Again, a number of different packages will be used in this session, some of which are new and may need to be installed:
+
+```{r message=F, warning=F, results=F}
+library(sp)
+library(gstat)
+library(dplyr)
+library(ggplot2)
+library(sf)
+library(tmap)
+```
+
+Once again, remember to:
+
+1. Create a seperate folder for this Session
+1. Always write your code into an R script... **always**!
+1. Save the script to the folder
+1. Set the working directory to the folder location
+
+Having done that you should clear your workspace for this session:
+
+```{r}
+rm(list = ls())
+```
+
+## 1. Preliminary exploration and visualisation
+
+The `meuse` soils data set considered in this session consists of zinc concentrations (in ppm), as well as their natural logarithm to work with a data set with a less skewed distribution. As a start, you will be displaying the map of all zinc concentrations, the histogram of zinc concentrations and that of the logarithms of zinc concentrations. When looking at the spatial distribution of concentration values, keep in mind that the Meuse river bank is located to the west and southwest border of the region.
+
+Lets look at the `meuse` soils data set and display its info. Note that we are working in the `sp` format for spatial data:
+
+```{r echo = F}
+data(meuse, package = "sp")
+```
+
+```{r eval = F}
+data(meuse, package = "sp")
+class(meuse)
+names(meuse)
+str(meuse)
+```
+
+Next, map the zinc concentrations using `ggplot` (Figure 1) - `meuse` is a data.frame, with locational attributes in `x` and `y` - this starts to hint at how `ggplot` could be used to map spatial data. In much of this Session `ggplot` is used to visiualise spatial data. Your task after this workshop is to develop the `tmap` version fo these maps.
+
+```{r, fig.cap = "Map of Zinc Concentrations (with ggplot)."}
+ggplot(meuse, aes(x,y)) +
+  geom_point(aes(color = zinc), size = 2, alpha = 3/4) +
+  ggtitle("Zinc concentration (ppm)") + 
+  coord_equal() + 
+  theme_bw()
+```
+
+Designate the coordinates in the data frame to generate a `SpatialPointsDataFrame` - a spatial data object in `sp` format, remembering to set the geographic projection:
+
+```{r echo = F}
+coordinates(meuse) = c("x","y")
+proj4string(meuse) <- CRS("+init=epsg:28992")
+```
+
+```{r eval = F}
+coordinates(meuse) = c("x","y")
+proj4string(meuse) <- CRS("+init=epsg:28992")
+coordinates(meuse)[1:4,]
+class(meuse)
+summary(meuse)
+```
+
+Now let us look at the distributions of the raw and logged zinc concentration data through their histograms (Figure 2). The logged transformed data appears more Normally distributed (which is a good thing, as we are working with Gaussian assumptions):
+
+```{r, fig.cap = "Histogram of Zinc Concentrations (raw and logged data)."}
+# set the plot parameters to 1 row, 2 columns
+par(mfrow=c(1,2))
+hist(meuse$zinc, breaks = 15, main = "Zinc (ppm)",
+     xlab = "zinc conc.", col = "salmon" )
+hist(log(meuse$zinc), breaks = "scott", main = "log(Zinc)",
+     xlab = "log (zinc conc.)", col = "wheat")
+# reset the plot parameters 
+par(mfrow=c(1,1))
+```
+
+Examine the grid (`meuse.grid`) that we will interpolate / predict / simulate to in subsequent sections. Such a grid is conveniently available for the `meuse` soils data set, but in most circumstances this would need to be defined by the analyst (e.g. using the `spsample` function in the `sp` package). Observe the resolution of this grid is usually arbitrary and reflects a compromise between: (i) a good spatial visualisation of the interpolated / predicted / simulated surface against (ii) the computational costs of implementing the spatial model.
+
+```{r echo = F}
+data(meuse.grid)
+```
+```{r eval = F}
+data(meuse.grid)
+summary(meuse.grid)
+class(meuse.grid)
+str(meuse.grid)
+```
+
+Using the `ggplot` function in the `ggplot2` package, we can display the grid and overlay the sample data locations (Figure 3). In subsequent sections our aim will be to interpolate / predict / simulate to the grid locations using a spatial model informed by the sample data locations.
+
+```{r, fig.cap = "Grid and sample locations."}
+p1 <- ggplot(data = as.data.frame(meuse.grid), aes(x,y)) + 
+  geom_point(size = 0.5) +
+  coord_equal() + 
+  ggtitle("Grid nodes and sample data locations")
+p1 + geom_point(data = as.data.frame(meuse), aes(x,y), 
+                shape = "*", size = 5, color = "red")
+```
+
+For operations in the `gstat` package, spatial data need to be in `sp` format. The `meuse.grid` can be converted first into a `SpatialPointsDataFrame` object (`sp` format) and the geographic projection set:
+
+```{r echo = F}
+coordinates(meuse.grid) = c("x","y")
+proj4string(meuse.grid) <- CRS("+init=epsg:28992")
+```
+
+```{r eval = F}
+coordinates(meuse.grid) = c("x","y")
+proj4string(meuse.grid) <- CRS("+init=epsg:28992")
+class(meuse.grid)
+str(meuse.grid)
+```
+
+Then it can be converted to from `SpatialPointsDataFrame` into a `SpatialPixelsDataFrame`:
+
+```{r}
+gridded(meuse.grid) = TRUE
+class(meuse.grid)
+```
+
+We can examine the output by displaying the `dist` variable in `meuse.grid`, using `ggplot` (Figure 4). Figure 4 displays a map of each grid point's distance to the river Meuse. The same `dist` variable is also available in the `meuse` data and can thus act as useful covariate when gridded model outputs are required.
+
+```{r, fig.cap = "Grid shown with Distance to river Meuse (via ggplot)"}
+ggplot(as.data.frame(meuse.grid), aes(x, y)) + 
+  geom_tile(aes(fill=dist)) + 
+  scale_fill_gradient(low = "red", high="yellow") + 
+  coord_equal() + theme_bw() + 
+  ggtitle("Distance to river Meuse")
+```
+
+## 2. Spatial interpolation with Inverse Distance Weighting (IDW)
+
+Interpolation is the spatial operation whereby $N$ sample data values $\{z({\bf u})_i, i=1,\ldots,N\}$ measured at $N$ locations $\{{\bf u}_i, i=1,\ldots,N\}$ are used to furnish a prediction $\hat{z}({\bf u}_0)$ for the unknown attribute value $z({\bf u}_0)$ at a prediction location with coordinate vector ${\bf u}_0$. In general, linear interpolation algorithms amount to furnish $N$ weights $\{w_i({\bf u}_0), i=1,\ldots,N\}$ for interpolation at location ${\bf u}_0$, where $w_i({\bf u}_0)$ denotes the weight assigned to the $i$-th location ${\bf u}_i$. Once the $N$ weights are determined, the interpolated value is given as:
+
+$$ \hat{z}({\bf u}_0) = \sum_{i=1}^N w_i({\bf u}_0) z({\bf u}_i) \; \; \; \mbox{or simply} \; \; \; \hat{z}_0 = \sum_{i=1}^N w_{0i} z_i$$
+
+Interpolation algorithms differ in the way the $N$ data are weighted to furnish the interpolated value $\hat{z}_0$.
+
+Inverse distance weighting (IDW) spatial interpolation is a widely used deterministic interpolation algorithm, where the interpolation weight $w_{0i}$ assigned to the $i$-th sample location is determined as:
+
+$$w_{0i} = \frac{1}{d_{0i}^p} / \sum_{i=1}^N \frac{1}{d_{0i}^p}$$
+
+where $d_{0i}$ is the distance between location ${\bf u}_0$ and ${\bf u}_i$, and $p$ is an exponent parameter controlling the smoothness of the resulting interpolation surface.
+
+### 2.1 IDW fit
+
+To conduct an IDW interpolation using the `gstat` package (Figure 5), the following commands are used, where the `~1` means no trend or a constant mean:
+
+```{r}
+logzinc.idw = idw(log(zinc)~1, meuse, meuse.grid)
+class(logzinc.idw)
+```
+
+```{r, fig.cap = "IDW prediction to a grid (log (zinc))"}
+spplot(logzinc.idw,"var1.pred", main = "log(zinc) IDW predictions")
+```
+
+OR in `tmap` (for a nicer map!, Figure 6):
+```{r, fig.cap = "IDW prediction to a grid (log (zinc)) using tmap."}
+tm_shape(logzinc.idw) +
+  tm_raster("var1.pred", title = "log(zinc) IDW")
+```
+
+### 2.2 Effects of transforming the data
+
+Now plot the histograms of the IDW predictions in both log-transformed space and back-transformed space (Figure 7):
+
+```{r, fig.cap = "Histograms of the IDW predictions"}
+par(mfrow=c(1,2))
+hist(logzinc.idw$var1.pred, main = "Transformed space",
+     xlab="IDW interpolated log(zinc)", col = "tomato")
+hist(exp(logzinc.idw$var1.pred), main = "Back-transformed space",
+     xlab="Back-transformed IDW zinc values", col = "cornflowerblue")
+par(mfrow=c(1,1))
+```
+
+Map the back-transformed predictions to the original concentrations and compare with the IDW of zinc concentrations (Figure 8), which on first sight appear broadly the same:
+
+```{r}
+zincfromlog.idw = logzinc.idw
+zincfromlog.idw$var1.pred = exp(logzinc.idw$var1.pred)
+zinc.idw = idw(zinc~1, meuse, meuse.grid)
+map.1 <- spplot(zincfromlog.idw,"var1.pred", main = "Zinc from log IDW interpolation")
+map.2 <- spplot(zinc.idw,"var1.pred", main = "Zinc from IDW interpolation")
+```
+
+```{r, fig.cap = "IDW prediction to a grid (zinc concentrations (ppm)))"}
+print(map.1, split = c(1,1,2,1), more = TRUE)
+print(map.2, split = c(2,1,2,1), more = FALSE)
+```
+
+The `tmap` alternative is (not given as a Figure in the pdf):
+```{r eval = F}
+t1 = tm_shape(zincfromlog.idw) +
+  tm_raster("var1.pred", title = "from log IDW", palette = "YlOrRd")
+t2 = tm_shape(zinc.idw) +
+  tm_raster("var1.pred", title = "from IDW", palette = "YlGnBu")
+tmap_arrange(t1, t2)
+```
+
+BUT - compare the histograms of IDW predicted values (Figure 9):
+
+```{r, fig.cap = "Histograms of the IDW predictions (on same scale)"}
+par(mfrow=c(1,2))
+hist(zincfromlog.idw$var1.pred, main = "Using transformed data",
+     xlab="Zinc from log IDW predictions", col = "darksalmon")
+hist(zinc.idw$var1.pred, main = "Using raw data",
+     xlab="Zinc IDW predictions", col = "blanchedalmond")
+par(mfrow=c(1,1))
+```
+
+There are clear differences! As also shown with data summaries:
+
+```{r}
+summary(zincfromlog.idw$var1.pred)
+summary(zinc.idw$var1.pred)
+# compare the variances
+c(var(zincfromlog.idw$var1.pred), var(zinc.idw$var1.pred))
+```
+
+Differences arise due to a bias when back-transforming - as *local medians* are found with the direct back-transform rather than *local means* which we want (e.g. Cressie 1993; Chiles and Definer 1999; Kyriakidis 2017). This is true of any power or Box-Cox type transform with IDW or kriging (and most statistical models), and is often over-looked, but procedures exist to correct for this bias with more involved back-transforms (Kitanidis and Shen 1996).
+
+### 2.3 Effects of varying the exponent
+
+Now investigate the effects of varying the exponent in IDW (default is inverse distance weighting power (`idp`) is 2) (Figure 10):
+
+```{r}
+logzinc.idw1 = idw(log(zinc)~1, meuse, meuse.grid, idp = 1)
+logzinc.idw2 = idw(log(zinc)~1, meuse, meuse.grid, idp = 2)
+logzinc.idw3 = idw(log(zinc)~1, meuse, meuse.grid, idp = 3)
+map.A <- spplot(logzinc.idw1,"var1.pred", main = "IDW with power = 1")
+map.B <- spplot(logzinc.idw2,"var1.pred", main = "IDW with power = 2")
+map.C <- spplot(logzinc.idw3,"var1.pred", main = "IDW with power = 3")
+```
+
+```{r, fig.cap = "IDW predictions when varying the exponent"}
+print(map.A, split = c(1,1,3,1), more = TRUE)
+print(map.B, split = c(2,1,3,1), more = TRUE)
+print(map.C, split = c(3,1,3,1), more = FALSE)
+```
+
+### 2.4 Effects of varying the neighbourhood size (NS)
+
+Now investigate the effects of varying the local neighborhood size (defined through 3 parameters - the min/max number of data neighbours of the location requiring the prediction and the max distance from the location requiring the prediction) in IDW (Figure 11):
+
+```{r, warning=F, message=F}
+logzinc.idw.local1 = idw(log(zinc)~1, meuse, meuse.grid, 
+                         nmax = 16, nmin = 4, maxdist = 400)
+logzinc.idw.local2 = idw(log(zinc)~1, meuse, meuse.grid, 
+                         nmax = 16, nmin = 4, maxdist = 1000)
+logzinc.idw.global = idw(log(zinc)~1, meuse, meuse.grid)
+map.11 <- spplot(logzinc.idw.local1,"var1.pred", main = "IDW with NS # 1")
+map.21 <- spplot(logzinc.idw.local2,"var1.pred", main = "IDW with NS # 2")
+map.31 <- spplot(logzinc.idw.global,"var1.pred", main = "IDW with NS # 3")
+```
+
+```{r, fig.cap = "IDW predictions when varying the neignbourhood"}
+print(map.11, split = c(1,1,3,1), more = TRUE)
+print(map.21, split = c(2,1,3,1), more = TRUE)
+print(map.31, split = c(3,1,3,1), more = FALSE)
+```
+
+### 2.5 Cross-validation
+
+How can we judge which IDW specification is the most accurate?
+
+ANSWER - use IDW with (leave-one-out) cross-validation.
+
+So lets re-investigate IDW with different exponents - and now, not predicting to the grid, but the sample locations only:
+
+```{r}
+# create an IDW "object" in gstat
+logzincIDW1.obj <- gstat(id="logzincIDW1.obj", formula = log(zinc) ~ 1, data = meuse,
+      nmax=12, set=list(idp=1)) # idp is the power exponent
+
+# perform cross-valiation
+logzincIDW1.cv <- gstat.cv(logzincIDW1.obj, debug.level=0, random=FALSE)
+# str(logzincIDW1.cv) # list contents
+rmse.idp1 <- sqrt(mean(logzincIDW1.cv$residual^2)) # RMS prediction error
+
+# Repeat for idp=2 
+logzincIDW2.obj <- gstat(id="logzincIDW2.obj", formula = log(zinc) ~ 1, data = meuse,
+      nmax=12, set=list(idp=2)) # idp is the power exponent
+# perform cross-valiation
+logzincIDW2.cv <- gstat.cv(logzincIDW2.obj, debug.level=0, random=FALSE)
+rmse.idp2 <- sqrt(mean(logzincIDW2.cv$residual^2)) # RMS prediction error
+
+# Repeat for idp=3 
+logzincIDW3.obj <- gstat(id="logzincIDW3.obj", formula = log(zinc) ~ 1, data = meuse,
+      nmax=12, set=list(idp=3)) # idp is the power exponent
+# perform cross-valiation
+logzincIDW3.cv <- gstat.cv(logzincIDW3.obj, debug.level=0, random=FALSE)
+rmse.idp3 <- sqrt(mean(logzincIDW3.cv$residual^2)) # RMS prediction error
+
+# Report the results
+c(rmse.idp1, rmse.idp2, rmse.idp3)
+```
+
+Thus IDW with an exponent = 3 is the most accurate, as it returns the smallest RMSE.
+
+Alternatives to cross-validation are the use of separate calibration (training) and validation data sets, where the latter data are never part of the model fitting process. This approach is strongly preferred when there are sufficient data for the data set to be split into two.
+
+## 3. Spatial interpolation and prediction with Kriging
+
+Kriging is an umbrella term encompassing a family of stochastic spatial interpolation and prediction algorithms. In its simplest form, Simple Kriging provides the Best Linear Unbiased Predictor (BLUP) of the unknown attribute values at a set of prediction locations (in a Gaussian context). The basic steps in kriging are:
+
+1. Estimate the sample semivariogram, which provides average dissimilarity between sample data pairs within pre-defined distance classes or bands, termed lags
+
+2. Model the sample semivariogram with a continuous function of distance (i.e. via a semivariogram model)
+
+3. Use that semivariogram model in kriging routines to furnish the $N$ weights at each interpolation location
+
+4. Compute the corresponding interpolated value $\hat{z}_0$, PLUS a measure of uncertainty, termed prediction error variance, $\hat{\sigma}_0^2$ associated with that value.
+
+As with IDW, one can perform global (involving all sample data) or local (involving sample data within a local neighborhood around ${\bf u}_0$) interpolation. 
+
+Similar to IDW, kriging considers the distance between sample data locations and the prediction location to determine the kriging weights. Unlike IDW, however, kriging accounts for the smoothness (or spatial dissimilarity) of the particular phenomenon under study, and for the redundancy between the data sample locations (see Chiles and Delfiner 1999). Also unlike IDW, kriging comes with a measure of prediction uncertainty, termed the prediction error variance. In these respects, kriging is superior to IDW.
+
+### 3.1 Semivariogram Estimation and Modeling
+
+In an exploratory context, it is first useful to investigate the sample (or empirical) semivariogram cloud (Figure 12), again using the log zinc data and where the `~1` means no trend or a constant mean (in other words - do not *detrend* the data in any way):
+
+```{r, fig.cap = "Semivariogram cloud for log (zinc)"}
+lzn.vgmcloud = variogram(log(zinc)~1, meuse, cloud = T)
+# str(lzn.vgmcloud)
+plot(lzn.vgmcloud, main='Sample semivariogram cloud for log(zinc)')
+```
+
+Next, investigate the 'binned' version of above with default distance classes within which the semivariances are averaged (Figure 13). Each point/value on the variogram plot is shown with number of data pairs used in the semivariance averaging:
+
+```{r}
+lzn.vgm = variogram(log(zinc)~1, meuse)
+lzn.vgm[c(1:4),]
+```
+
+```{r, fig.cap = "Semivariogram for log (zinc) (default binning)"}
+plot(lzn.vgm,plot.numbers = T, 
+     main='Sample semivariogram for log(zinc)')
+```
+
+Next, experiment with different distance classes through the `width` and `cutoff` arguments of the `variogram` function (Figure 14). Observe how information for each point/value weakens as the binning width decreases. The `cutoff` is important as semivariances are known to be unreliable at distances over a 1/3 of the sample area. The `cutoff` is also important to promoting a reliable variogram model fit to the empirical variogram where an ordinary or weighted least squares (OLS or WLS) fit is commonly used.
+
+```{r}
+lzn.vgm2 = variogram(log(zinc)~1, meuse, width = 75, cutoff = 1500)
+# str(lzn.vgm2)
+```
+
+```{r, fig.cap = "Semivariogram for log (zinc) (user-specified binning)"}
+plot(lzn.vgm2,plot.numbers = T, 
+     main='Sample semivariogram for log(zinc)')
+```
+
+There are many valid variogram models to choose from that can be used to represent the empirical variogram. In this instance, a **Spherical** model is user-specified with a correlation range = 900m, a partial sill = 0.7 and a nugget effect with partial sill = 0.1. For a simple illustration of the model (Figure 15), we define points starting from 0.1, go up to 1000, and put 50 distance values in that [0.1, 1000] interval:
+
+```{r, fig.cap = "Spherical model with user-specified parameters"}
+model.sph = vgm(0.7, "Sph", 900, 0.1)
+modelEval = variogramLine(model.sph,1000,50,0.1)
+plot(modelEval,ylim=c(0,0.8),
+     main='Spherical model with user-specified parameters')
+```
+
+The user-specified variogram model above, now provides initial starting parameters for a WLS statistical fit to the empirical semivariogram, as follows (Figure 16):
+
+```{r, fig.cap = "Sample & WLS fitted model semivariogram for log(zinc) - Spherical model"}
+lzn.vgm.fit.sph = fit.variogram(lzn.vgm,model.sph,fit.method=1)
+plot(lzn.vgm,lzn.vgm.fit.sph,
+     main='Sample & model semivariogram for log(zinc) - Spherical model')
+```
+
+Try fitting a different semivariogram model (Figure 17), say an **Exponential** model with initial parameters of a correlation range = 300, partial sill = 0.7 and a nugget effect with partial sill = 0.1. Note the *effective correlation range* for an Exponential model is three times that specified.
+
+```{r, fig.cap = "Sample & WLS fitted model semivariogram for log(zinc)- Exponential model"}
+model.exp = vgm(0.7, "Exp", 300, 0.05)
+lzn.vgm.fit.exp = fit.variogram(lzn.vgm,model.exp,fit.method=1)
+plot(lzn.vgm,lzn.vgm.fit.exp,
+     main='Sample & model semivariogram log(zinc) - Exponential model')
+```
+
+Variogram fits can be assessed and compared through 'SSErr', although this diagnostic should not be considered as a sole means of comparison.
+
+```{r}
+# str(lzn.vgm.fit.sph)
+sse.sph <- attr(lzn.vgm.fit.sph,"SSErr")
+# str(lzn.vgm.fit.exp)
+sse.exp <- attr(lzn.vgm.fit.exp,"SSErr")
+c(sse.sph, sse.exp)
+```
+
+### 3.2 Ordinary Kriging
+
+Both Simple Kriging (SK) and Ordinary Kriging (OK) underpin all kriging algorithms. The former assumes a **known mean**, while the latter assumes an **unknown mean** - which entails it is more commonly applied in practice.  Let us compare Ordinary Kriging with a global (unique) neighbourhood versus that specified with a local neighbourhood (note 'model' contains the variogram model parameters and type):
+
+```{r}
+lzn.kriged.global = krige(log(zinc)~1,meuse,
+                          meuse.grid, model = lzn.vgm.fit.sph)
+lzn.kriged.local = krige(log(zinc)~1, meuse,
+                         meuse.grid, model = lzn.vgm.fit.sph,
+                         nmax = 16, nmin = 4, maxdist = 800)
+```
+
+And mapping the results in Figure 18 (the OK predictions and the OK prediction error variances):
+
+```{r, fig.cap = "OK predictions when varying the neignbourhood"}
+map.OK.1a <- spplot(lzn.kriged.global,
+                    "var1.pred", main = "OK predictions (all data)")
+map.OK.1b <- spplot(lzn.kriged.global,
+                    "var1.var", main = "OK variances (all data)")
+map.OK.2a <- spplot(lzn.kriged.local,
+                    "var1.pred", main = "OK predictions (data subset)")
+map.OK.2b <- spplot(lzn.kriged.local,
+                    "var1.var", main = "OK variances (data subset)")
+print(map.OK.1a, split = c(1,1,2,2), more = TRUE)
+print(map.OK.1b, split = c(2,1,2,2), more = TRUE)
+print(map.OK.2a, split = c(1,2,2,2), more = TRUE)
+print(map.OK.2b, split = c(2,2,2,2), more = FALSE)
+```
+
+Observe the OK variances tend to reflect the sample layout or configuration (compare with Figure 1). Is that a good thing?
+
+### 3.3 Kriging with a Trend Model
+
+The steps for kriging with a trend model are as follows:
+
+1. Estimate, using Generalized Least Squares (GLS), the coefficients of a linear model linking the known attribute values at the data locations with the co-located data on auxiliary variables
+
+2. Use that model to predict the known attribute values at the sample data locations, and compute the corresponding residuals (from the regression model)
+
+3. Compute the sample semivariogram of those residuals and fit a parametric semivariogram model
+
+4. Use the regression model to predict the unknown attribute values at any grid node where the corresponding data of the auxiliary variables are available
+
+5. Predict, via *Simple Kriging* with known mean = 0, the residuals at the grid nodes
+
+6. Add the regression-based and Simple-Kriging-derived predictions to compute the final predicted attribute values; this simple addition does not hold for the computation of the corresponding kriging variance.
+
+
+Observe there are multiple variations on this general theme that underline spatial prediction via kriging:
+
+* When the auxiliary variable is a vector of 1s, i.e., an intercept only model, and one is considering kriging with moving local neighborhoods, the entire procedure reduces to **Ordinary Kriging**
+
+* When the auxiliary variables pertain to coordinates, the entire procedure is commonly termed **Universal Kriging**
+
+* In the general auxiliary variable case, the original **Kriging with an External Drift** procedure assumes a linear regression model, whereas recent variations allow for non-linear models, commonly under the term **Regression Kriging**. Note that the theoretical developments are more clear in the former case.
+
+
+In what follows, you will first establish a linear regression model, estimated using Ordinary Least Squares (OLS), between the log zinc concentrations (dependent variable) and the square root of the distance to the river Meuse (explanatory variable), using the following R syntax:
+
+```{r eval = F}
+log(zinc) ~ sqrt(dist) 
+```
+
+Note that the values of the variable `dist` are already pre-computed and available as a separate column in the `meuse` data frame.
+
+Following this initial regression assessment, the regression's residuals can be investigated and modelled for spatial dependence and then Kriging with an External Drift (KED) can then be applied (confusingly, termed 'Universal Kriging' in `gstat`).
+
+Observe the stepped procedure that follows serves for demonstration purpose only, as in practice a **restricted maximum likelihood (REML)** would be followed that estimates all KED (regression and variogram) parameters concurrently and is an unbiased estimation procedure given inherent identification problems of separating first- from second-order effects (e.g. Cressie 1993). REML estimation is returned to again in workshop session 6. The steps are:
+
+Step 1: Visually assess the relationship between log(zinc) and sqrt(dist) (Figure 19):
+
+```{r, fig.cap = "Relationship between log (zinc) vs sqrt (distance to river)"}
+plot(log(zinc)~sqrt(dist), meuse, 
+     main='log (zinc) vs sqrt (distance to river)', pch=19, col=4)
+abline(lm(log(zinc)~sqrt(dist), meuse))
+```
+
+Step 2: Fit a linear regression model:
+
+```{r}
+regr = lm(log(zinc)~sqrt(dist),meuse)
+# summary(regr)
+```
+
+Step 3: Visually inspect and map the residuals from the linear regression fit (Figure 20):
+
+```{r}
+predLogZinc = predict(regr) # Regression predictions
+resLogZinc = log(meuse$zinc) - predLogZinc # Actual minus predicted
+summary(resLogZinc) # Summaries for residuals
+meuseResLogZinc = data.frame(meuse@coords,resLogZinc) # Getting ready for mapping
+coordinates(meuseResLogZinc) = c("x","y")
+```
+
+```{r, fig.cap = "Residuals from linear regression fit"}
+spplot(meuseResLogZinc,zcol="resLogZinc", key.space = "right", 
+       pch=20, cex=1.75, cuts=9, main = "Residuals from linear regression fit")
+```
+
+Step 4: Calculate the empirical semivariogram of the residuals from a regression of log(zinc) on sqrt(dist from river); and also fit the semivariogram model (choosing a Spherical model) (Figure 21):
+
+```{r}
+lznr.vgm = variogram(log(zinc)~sqrt(dist), meuse) # sqrt(dist)
+lznr.vgm.fit = fit.variogram(lznr.vgm, model = vgm(0.5, "Sph", 300, 0.1))
+lznr.vgm.fit
+```
+
+```{r, fig.cap = "Residual semivariograms"}
+plot(lznr.vgm,lznr.vgm.fit,main='Residual semivariograms')
+```
+
+Step 5: Implement variations of Kriging with External Drift (KED) (confusingly, termed 'Universal Kriging' in `gstat`). In this case, comparing global with local neighbourhoods:
+
+```{r}
+lznr.kriged.global = krige(log(zinc)~sqrt(dist), meuse,
+                           meuse.grid, model = lznr.vgm.fit)
+lznr.kriged.local = krige(log(zinc)~sqrt(dist), meuse,
+                          meuse.grid, model = lznr.vgm.fit, nmax = 16, 
+                          nmin = 4, maxdist = 800)
+```
+
+Step 6: Present (map) the results (Figure 22):
+
+```{r, fig.cap = "KED predictions when varying the neignbourhood"}
+map.KED.1a <- spplot(lznr.kriged.global,
+                    "var1.pred", main = "KED predictions (all data)")
+map.KED.1b <- spplot(lznr.kriged.global,
+                    "var1.var", main = "KED variances (all data)")
+map.KED.2a <- spplot(lznr.kriged.local,
+                    "var1.pred", main = "KED predictions (data subset)")
+map.KED.2b <- spplot(lznr.kriged.local,
+                    "var1.var", main = "KED variances (data subset)")
+print(map.KED.1a, split = c(1,1,2,2), more = TRUE)
+print(map.KED.1b, split = c(2,1,2,2), more = TRUE)
+print(map.KED.2a, split = c(1,2,2,2), more = TRUE)
+print(map.KED.2b, split = c(2,2,2,2), more = FALSE)
+```
+
+### 3.4 Cross-validation (OK vs KED)
+
+It is now useful to assess the value of KED over the simpler OK model. This can again be achieved through leave-one-out cross-validation. In this case, OK and KED are both specified with a global neighbourhood:
+
+```{r}
+cv.ok = krige.cv(log(zinc)~1, locations = meuse, model = lzn.vgm.fit.sph)
+cv.ked =  krige.cv(log(zinc)~sqrt(dist), locations = meuse, model = lznr.vgm.fit)
+```
+
+And compare the cross-validation error summaries and the RMSEs, where KED is only marginally more accurate:
+
+```{r}
+summary(cv.ok$residual)
+summary(cv.ked$residual)
+sqrt(sum(cv.ok$residual^2)/length(cv.ok$residual)) # RMSE
+sqrt(sum(cv.ked$residual^2)/length(cv.ked$residual)) # RMSE
+```
+
+## 4. Geostatistical Simulation
+
+Interpolated (via IDW or kriging) attribute surfaces either: (i) undergo spatial operations involving more than two locations at a time, for example, slope computation from elevation or other focal or zonal operations in a GIS, or (ii) serve as inputs to environmental or socioeconomic models with spatially distributed inputs or parameters; for example, the spatial distribution of rainfall is a critical parameter in models of overland flow and runoff computations.
+
+In such cases, knowledge of the local kriging attribute prediction and variance at a set of target locations, considered one at a time, is not adequate for uncertainty propagation purposes. The preferred means for uncertainty propagation in this case is geostatistical Monte Carlo simulation.
+
+Geostatistical simulation generated multiple realizations of the spatial distribution of the unknown attribute field. Simulations can be specified as either unconditional or conditional. Conditional realizations or simulations reproduce: (i) any measurements at their sample locations, (ii) the variogram model of that attribute, and (iii) any relationships with relevant auxiliary data. These alternative realizations are then used in a Monte Carlo framework as inputs to spatial operations or models, in order to evaluate the uncertainty in the spatial distribution of model outputs.
+
+Example conditional simulations (without a trend component) can be found as follows:
+
+```{r}
+logzinc.sim.OK <- krige(log(zinc)~1, meuse, meuse.grid,
+                        model = lzn.vgm.fit.sph, nmax = 24, nsim = 4)
+```
+
+And map the results (Figure 23):
+
+```{r, fig.cap = "Four conditional simulations of log zinc (without a trend component)"}
+spplot(logzinc.sim.OK, main = "Four OK-based realizations of log (zinc)")
+```
+
+Example conditional simulations (with a trend component) can be found as follows:
+
+```{r}
+logzinc.sim.KED <- krige(log(zinc)~sqrt(dist), meuse, meuse.grid,
+                         model = lznr.vgm.fit, nmax = 24, nsim = 4)
+```
+
+And map the results (Figure 24):
+
+```{r, fig.cap = "Four conditional simulations of log zinc (with a trend component)"}
+spplot(logzinc.sim.KED, main = "Four KED-based realizations of log (zinc)")
+```
+
+In summary, conditional simulation provides **spatial realisations** that preserve the sample mean, sample variance, etc. Kriging does not - as variance is reduced through **spatial smoothing**. Although one can show that, in a Gaussian context, the mean and variance of many (100's) simulated attribute values at a grid node approximate the corresponding Kriging-derived prediction and prediction error variance.
+
+## 5. Summary
+
+In summary, this session has introduced core concepts in the *Classical* Geostatistical framework. Concepts have been presented that underpin that found in *Modern* Geostatistics where kriging is more commonly presented within a Bayesian inferential framework (as prediction uncertainty is better characterised - remember the OK variances, above?) and where geostatistical simulation is more commonly presented through a multiple-point (i.e. image-based) framework rather than the two-point (i.e. variogram-based) framework considered here.
+
+Note also in modern terminology, 'Geostatistics' is often replaced with the study of 'Gaussian random fields'. The "Geo" in Geostatistics also relates to Geology rather than Geography given Geostatistical theory has strong roots in mineral exploration. Georges Matheron (Paris school of mines) who developed much of the theory for Geostatistics in the 1960's termed the word "kriging" in honour of Daniel Krige's more applied work in the 1950's, for ore reserve estimation in the gold mines of South Africa.
+
+For *Bayesian Geostatistics*, functions from packages such as: `geoR`, `spTimer` and `spBayes` can be employed. *Multiple-point Geostatistics* can be implemented through the `mps` package.
+
+## Tasks
+
+**Task 1**: in your own time, repeat the whole session using `copper` rather than `zinc` as the variable of interest. Try to get familiar with all the options and tuning parameters for an assured and robust geostatistical analysis.
+
+**Task 2**: in your own time, repeat the maps of the session using `sf` and `tmap`. For example, converting the Meuse data frame into an `sf` object and extending the `tmap` examples above.
+
+```{r}
+meuse_sf = st_as_sf(as.data.frame(meuse), coords = c("x", "y"), 
+                    crs = 28992, agr = "constant")
+# meuse_sf[1:3,] # to see its structure
+```
+
+Plot the zinc concentrations using `qtm` and `spplot` and compare with earlier `ggplot`:
+
+```{r eval=F}
+qtm(meuse_sf, symbols.col = "zinc", symbols.size = 0.5)
+```
+
+```{r eval=F}
+spplot(meuse,zcol="zinc", main = "Zinc concentrations (ppm)")
+```
+
+Which of the above do you prefer? The `qtm` and `tmap`, the `spplot` or the `ggplot` maps?
+
+## Useful resources
+
+Useful online resources using the `meuse` soils data set can be found here:
+
+- http://statweb.lsu.edu/faculty/li/IIT/spatial.html
+- http://rstudio-pubs-static.s3.amazonaws.com/10213_8c02d102993942a88574e44abdf3a235.html
+- https://cran.r-project.org/web/packages/gstat/vignettes/gstat.pdf
+
+It is also acknowledged that this session has extended the workshop materials of Lex Comber, Dimitris Kavroudakis and Phaedon Kyriakidis given at the 2019 AGILE conference. 
+
+
+## References
+
+Chiles, J.P. and Delfiner, P., 2009. *Geostatistics: modeling spatial uncertainty*. John Wiley & Sons.
+
+Cressie, N., 1993. *Statistics for spatial data*. Wiley, New Jersey
+
+Kitanidis, P.K. and Shen, K.F., 1996. Geostatistical interpolation of chemical concentration. *Advances in Water Resources*, 19(6), pp.369-378.
+
+Kyriakidis, P., 2016. Geostatistics. pp.1-13 in *International Encyclopedia of Geography: People, the Earth, Environment and Technology*. Wiley, New Jersey.
+
+
+
+

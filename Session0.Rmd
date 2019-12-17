@@ -1,0 +1,442 @@
+---
+title: "Session 0: R Basics (you should know this!)"
+author: "Lex Comber and Paul Harris"
+date: "November 2019"
+output: pdf_document
+---
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.align='center',message=FALSE,warning=FALSE)
+library(knitr)
+library(kableExtra)
+```
+\tableofcontents
+
+## Overview
+
+We assume that workshop attendees have some familiarity with R and that they are able to do a number of things. This document provides a brief summary of these.
+
++ Part 1 describes how to set up R / RStudio and ways of working in R. 
++ Part 2 provides a brief introduction to R and R data types.
++ Part 3 has some useful additional information.
+
+## Part 1: Setup and Working in R 
+
+### 1.1 Installing R and RStudio
+
+The simplest way to get R installed on your computer is to go the download pages on the R website - a quick search for `download R' should take you there, but if not you could try:
+
++ http://cran.r-project.org/bin/windows/base/ for Windows 
++ http://cran.r-project.org/bin/macosx/ for Mac 
++ http://cran.r-project.org/bin/linux/ for Linux 
+
+The Windows and Mac version come with installer packages and are easy to install whilst the Linux binaries require use of a command terminal. 
+
+We expect that most workshop attendees and most users of R will using the RStudio interface to R, although users can of course still is just R. 
+
+RStudio can be downloaded from https://www.rstudio.com/products/rstudio/download/ and the free version of RStudio Desktop is more than sufficient. RStudio allows you to organise your work into projects, to use RMarkdown to create documents and web-pages, to link to your GitHub site and much more. It can be customized for your preferred arrangement of the different panes. 
+
+### 1.2 Installing Packages in R
+
+The `base` installation includes many functions and commands. However, more often we are interested in using some particular functionality, encoded into **packages** contributed by the R developer community. Installing packages for the first time can be done at the command line in the R console using the `install.packages` command as in the example below or via the R menu items. 
+```{r int1, eval=FALSE, echo=TRUE, message=FALSE}
+install.packages("tmap", dep = T)
+```
+
+In Windows, the menu for this can be accessed by **Packages > Load Packages** and on a Mac via **Packages and Data > Package Installer**. In either case, the first time you install packages you may have to set a mirror site, from which to download the packages. Once the package has been installed on your computer then the library can be called in your R session as below.
+```{r int2, eval=TRUE, echo=TRUE, message=FALSE}
+library(tmap)
+```
+
+You may have to set a **mirror** site from which the packages will be downloaded to your computer. Generally you should pick one that is nearby to you. 
+
+Once you have installed the software you can run it. On a Windows computer an R icon is typically installed on the desktop and on a Mac, R can be found in the Applications folder. Macs and Windows have slightly different interfaces but the protocols and processes for an R session on either platform are similar.
+
+There are literally 1000s of packages that have been contributed to the R project by various researchers and organisations. These can be located by name at http://cran.r-project.org/web/packages/available_packages_by_name.html if you know the package you wish to use. It is also possible to search the CRAN website to find packages to perform particular tasks at http://www.r-project.org/search.html. Additionally many packages include user guides in the form of a PDF document describing the package and listed at the top of the index page of the help files for the package. 
+
+When you install these packages it is strongly suggested you also install the dependencies - other packages required by the one that is being installed - by either selecting check the box in the menu or including `dep=TRUE` in the command line as below
+```{r intro1, eval=FALSE, echo=TRUE, message=FALSE}
+install.packages("GISTools", dep = TRUE)
+```
+
+Packages are occasionally completely re-written and this can impact on code functionality. Recently some of the read and write functions for spatial data in the `maptools` package (`readShapePoly`, `writePolyShape` etc) have depreciated. For instance:
+```{r int3, eval=FALSE, echo=TRUE, message=TRUE, warning=TRUE}
+library(maptools)
+?readShapePoly
+```
+
+If the help for these functions are examined contains a warning and suggests other functions that should be used instead. 
+
+Such changes are only a minor inconvenience and are part of the nature of a dynamic development environment provided by R in which to do research: such changes are inevitable as package finesse, improve and standardise.  
+
+### 1.3 Working in R (always use a script)
+
+As you work though, the expectation is that you run all the code that you come across. We cannot emphasise enough the importance of *learning by doing* - the best way to learn how to write R code is to write and enter it. Some of the code might look a bit intimidating when first viewed. However, the only really effective way to understand it is to give it a try. 
+
+Beyond this there are further choices to be made. Command lines can be entered in two forms: directly into the *R console* window or as a series of commands into a script window. We strongly advise that all code should be written in script (an `.R` file) and then run from the script.
+
+**Always use a script!**\
+It is good practice to write your code in scripts and RStudio includes its own editor (similar to Notepad in Windows or TextEdit on a Mac). Scripts are useful if you wish to automate data analysis, and have the advantage of keeping a saved record of the relevant R programming language commands that you use in a given piece of analysis. These can be re-executed, referred to or modified at a later date. For this reason, you should get into the habit of constructing scripts for all your analysis. Since being able to edit functions is extremely useful,  both the MS Windows and Mac OSX versions of R have built-in text editors. In RStudio you should go to **File > New File**. In R to start the Windows editor with a blank document, go to **File > New Script** and to open an existing script  **File > Open  Script**. To start the Mac editor, use the the menu options **File > New Document** to open a new document and **File > Open Document** to open an existing file.
+
+Code may written directly into a script or document as described below. As you have the PDF version you will be able to copy and paste the code into the script. Snippets of code in your script can be highlighted (or the cursor placed against them) and then run, either by pressing the 'Run` icon at the top left of the script pane, or by pressing **Ctrl Enter** (PC) or **Cmd Enter** (Mac)
+
+Once code is written into these files, they can be saved for future use and rather than copy and pasting each line of code, both R and RStudio have their own shortcuts. Lines of can be run directly by placing the cursor on the line of code (or highlighting a block of code) and then using  Ctrl-R (Windows) or Cmd-Return (Mac). RStudio also has a number of other keyboard shortcuts for running code, auto-filling when you are typing, assignment etc. Further tips are described at http://r4ds.had.co.nz/workflow-basics.html.
+
+It is also good practice to set the working directory at the beginning of your R session. This can be done via the menu in RStudio **Session > Set Working Directory > ...**. In Windows R this is **File > Change dir...** and in Mac R this is **Misc > Set Working Directory**. This points the R session to the folder you choose and will ensure that any files you wish to read, write or save are placed in this directory. 
+
+Scripts can be saved by selecting **File > Save As** which will prompt you to enter a name for the R script you have just created. Chose a name (for example `test.R`) and select save. It is good practice to use the file extension `.R`. 
+
+The code snippets included in this workshop describe commands for data manipulation and analysis, to exemplify specific functionality. It is expected that you will run the R code yourself. This can be typed directly into the R console BUT we strongly advise that you create R scripts for your code. 
+
+The reasons for running the code yourself are so that you get used to using the R console and running the code will help your understanding of the code's functionality.  
+
+## Part 2: Getting started in R
+
+Open R / RStudio.
+
+The command line prompt in the console window, the `>`, is an invitation to start typing in your commands. For example, type `2+2` and press the Enter key: 
+```{r}
+2+2 
+```
+
+Here the result is 4. The `[1]` that precedes it formally indicates, _first requested element will follow_. In this case there is just one element. The `>` indicates that R is ready for another command.
+
+Open a Script. 
+
+You should **always** write your code in script than can be saved and re-run.
+
+### 2.1 A bit more detail: the uses of R
+
+#### R as a calculator
+R evaluates and prints out the result of any expression that one types in at the command line in the console window. Expressions are typed following the prompt `>` on the screen. The results appears on subsequent lines. Note that anything after a `#` prefix on a line is not evaluated 
+```{r eval = F}
+2+2
+sqrt(10)
+2*3*4*5
+# Interest on $1000, compounded annually
+# at 7.5% p.a. for five years
+1000*(1+0.075)^5 - 1000
+# R knows about pi
+pi # pi
+#Circumference of Earth at Equator, in km; radius is 6378 km 
+2*pi*6378 
+sin(c(30,60,90)*pi/180) # Convert angles to radians, then take sin() 
+```
+
+#### Data summaries 
+
+We may for example require information on  variables in a data set. The code below loads some internal R data and summarises each column or field: 
+```{r}
+data(mtcars)
+str(mtcars)
+```
+
+The code above loads the data and the `str` function shows the formats of the attributes in `mtcars`. 
+
+The `summary` function is very useful and shows different summaries of the individual attributes in `mtcars`.
+```{r}
+summary(mtcars)
+```
+
+The main R graphics function is `plot()` and when applied to data frame of a matrix shows how attribute values correlate to each other. There are various other alternative helpful forms of graphical summary. A helpful graphical summary for the `mtcars` data frame is the scatterplot matrix, shown below
+
+```{r ch1fig2, eval=TRUE, echo=T}
+names(mtcars)
+names(mtcars)[c(1:3,6)]
+c(1:3,6)
+plot(mtcars[,c(1:3,6)], pch = 1, cex = 1.5)
+```
+
+#### Basic data selection operations
+
+In the plot call above there are number of things to note  (as well as the figure). In particular note the use of the vector `c(1:3,6)` to index the columns of `mtcars`:
+
+- In the second line it was used to subset the vector of column names created by `names(mtcars)`.
+- In the third line it was printed out. Notice how `1:3` printed out all the numbers between 1 and 3 - very useful. 
+- For the plot, the vector was passed to the second argument, after the comma, in the square brackets `[,]` to indicate which columns were to be plotted. The referencing in this way is **very important**: the individual rows and columns of 2 dimensional data structures like data frames, matrices, tibbles etc can be accessed by passing references to them in the square brackets.
+```{r eval = F}
+# 1st row
+mtcars[1,]
+# 3rd column
+mtcars[,3]
+# a selection of rows
+mtcars[c(3:7, 10,11),]
+```
+Such indexing could of course have been assigned to a R object and used to do the subseting:
+```{r eval = F}
+x = c(1:3, 6)
+names(mtcars)[x]
+plot(mtcars[,x], pch = 1, cex = 1.5)
+```
+
+Indexing operations - indexes of specific rows and columns are frequently used to select data for further operations. 
+
+Data held in data tables (and arrays) in R can be accessed using some simple square brackets notation as follows:
+```{r eval = F}
+# dataset[rows, columns]
+```
+
+Specific rows and columns can be selected using a pointer or an *index*. An index tells R which rows and / or columns to select and can be specified in 3 main ways :
+
+- numerically - the code below returns the first 10 rows and 2 columns
+```{r eval = F}
+mtcars[1:10, c(1,3)]
+```
+- by name -  the code below returns the first 10 rows and 2 named columns
+```{r eval = F}
+mtcars[1:10, c("hp", "wt")]
+```
+- logically - the code below returns the first 10 rows and 2 logically selected columns
+```{r eval = F}
+mtcars[1:10, c(TRUE, FALSE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE)]
+```
+
+Thus there are multiple ways in which the $n^{th}$ rows or columns in a data table can be accessed.
+
+Also note that compound logical statements can be used to create an index. The code below selects all the records for the year 1966 in the Caribbean region:
+```{r eval = F}
+n <- mtcars$cyl == 8 & mtcars$mpg > 17
+mtcars[n,]
+```
+
+Different binary operators for generating logical statements can be found at:
+```{r eval = F}
+?Comparison
+```
+And the syntax for compound logical statements - you will principally be interested in and (`&`) and or (`|`)
+```{r eval = F}
+?Syntax
+```
+
+
+#### R as an Interactive Programming Language
+
+The code below calculates the miles that correspond to 0 to 100 kilometres:
+```{r}
+km <- 0:100
+miles <- 0.621*km
+conversion <- data.frame(Km=km, Miles=miles) 
+head(conversion)
+```
+
+The second lines shows how R multiplies **all* of the elements in the `km` object by 0.0621.
+
+It is also possible to create loops in R. A simple example of a 'for loop' is:
+```{r eval = F}
+for (i in 1:10) 
+  print(paste("printing:", i))
+```
+
+Here is another example of a 'for loop', to do in a complicated way what we did very simply, above:
+```{r}
+# km to miles
+for (km in seq(10, 100, 10))
+  print(c(km, 0.621*km))
+```
+
+Here is a long-winded way to sum the three numbers 33, 55 and 66:
+```{r}  
+# create an output, with a value of 0
+answer <- 0
+for (j in c(33,55,66)){
+  answer <- j+answer
+}
+# show the result
+answer
+```
+
+The calculation iteratively builds up the object `answer`, using the successive values of `j` listed in the vector `c(33,55,66)`. i.e. Initially,`j=33`,and `answer` is assigned the value `33 + 0 = 33`. Then `j=55`, and `answer` is assigned the value `55 + 33 = 88`. Finally, `j=66`, and answer is assigned the value `66 + 88 = 154`. Then the procedure ends, and the contents of answer can be examined.
+
+There is a more straightforward way to do this calculation:
+```{r}
+sum(c(33,55,66))
+```
+
+Skilled R users have limited recourse to loops. There are often, as in this and earlier examples, better alternatives.
+
+### 2.2 Basic data types in R 
+
+The preceding sections created a number of R objects (you should see them in the Environment pane in RStudio or by entering `ls()` at the console). There are a number of fundamental data types in R that are the building blocks for data analysis. The sections below explore different data types and illustrate further operations on them.
+
+#### Vectors
+
+Examples of vectors are
+```{r eval = F}
+c(2,3,5,2,7,1)
+3:10 # The numbers 3, 4, .., 10 
+c(TRUE,FALSE,FALSE,FALSE,TRUE,TRUE,FALSE) 
+c("London","Leeds","New York","Montevideo", NA)
+```
+
+Vectors may have mode logical, numeric or character. The first two vectors above are numeric, the third is logical (i.e. a vector with elements of mode logical), and the fourth is a string vector (i.e. a vector with elements of mode character).
+
+The missing value symbol, which is `NA`, can be included as an element of a vector. 
+
+The `c` in `c(2, 3, 5, 7, 1)` above is an acronym for _concatenate_, i.e. the meaning is: _Join these numbers together in to a vector_. Existing vectors may be included among the elements that are to be concatenated. In the following, we form vectors `x` and `y`, which we then concatenate to form a vector `z`:
+```{r}
+x <- c(2,3,5,2,7,1) 
+x
+y <- c(10,15,12) 
+y
+z <- c(x, y)
+z
+```
+
+The concatenate function `c()` may also be used to join lists. 
+
+Vectors can be subsetted as was briefly illustrated above with the `mtcars` data. There are two common ways to extract subsets of vectors. Note in both cases, the use of the square brackets `[ ]`.
+
+1. Specify the numbers of the elements that are to be extracted, e.g.
+```{r}
+x <- c(3,11,8,15,12)  # Assign to x the values 3, 11, 8, 15, 12
+x[c(2,4)]   # Extract elements (rows) 2 and 4
+```
+
+Negative numbers can be used to **omit** specific vector elements:
+```{r}
+x <- c(3,11,8,15,12)
+x[-c(2,3)]
+```
+
+2. Specify a vector of logical values. The elements that are extracted are those for which the logical value is T. Thus suppose we want to extract values of x that are greater than 10.
+```{r}
+x >10  # This generates a vector of logical (T or F)
+x[x > 10]
+```
+
+Arithmetic relations that may be used in the extraction of subsets of vectors are `< <= > >= == !=`. The first four compare magnitudes, `==` tests for equality, and `!=` tests for inequality.
+
+Note that any arithmetic operation or relation that involves `NA` generates an `NA`. Set `y` as follows:
+```{r}
+y <- c(1, NA, 3, 0, NA)
+```
+
+Running `y[y==NA]<-0` leaves `y` unchanged.
+```{r}
+y==NA
+```
+The reason is that all elements of `y==NA` evaluate to `NA`.This does not select an element of `y`, and there is no assignment. To replace all `NAs` by 0, use
+```{r}
+y[is.na(y)] <- 0
+```
+
+#### Matrices vs Data Frames
+
+The fundamental difference between a `matrix` and `data.frame` object classes are that matrices can only contain a single data type - numeric, logical, text etc - whereas a data frame can have different types of data in each column. All elements of any column must have the same type i.e. all numeric or all factor, or all character. 
+
+Matrices are easy to define:
+```{r}
+matrix(1:10, ncol = 2)
+matrix(1:10, ncol = 2, byrow = T)
+matrix(letters[1:10], ncol = 2)
+```
+
+Many R packages come with datasets. The `Cars93` data set in the Venables and Ripley `MASS` R package. If this is the first time you have run R or have not used the `MASS` library before then you will need to install it:
+
+```{r eval = F}
+install.packages("MASS", dep = T)
+```
+
+The package can be called and the data loaded to working memory: 
+```{r}
+library(MASS)
+data(Cars93)
+```
+```{r eval = F}
+dim(Cars93)
+class(Cars93)
+head(Cars93)
+```
+The column names of the `Cars93` data table can be accessed with `names(Cars93)`) and the individual data types can be investigated using the `sapply` function:
+```{r eval = F}
+sapply(Cars93, class)
+```
+
+The first three columns have mode factor, and the fourth has mode numeric, and so on. Columns can be vectors of any mode. 
+
+A data frame is effectively a list of column vectors, all of equal length. 
+
+Indexing or subscripting can be used to extracts a list. Thus `Cars93[4]` is a data frame with a single column (`Min.Price`), which is the fourth column vector of `Cars93`. There are different ways of extracting a column vector. The use of matrix-like subscripting, e.g. `Cars93[,4]` or `Cars93[1, 4] for just the first element`, takes advantage of the rectangular structure of data frames.
+
+## Part 3: Addendum
+
+### 3.1 Useful Functions
+
+A number of useful functions are listed below. You should explore the help for these.
+```{r eval = F}
+# print() # Prints a single R object
+# cat() # Prints multiple objects, one after the other 
+# length() # Number of elements in a vector or of a list
+# mean()
+# median()
+# range()
+# unique() # Gives the vector of distinct values
+# diff() # Replace a vector by the vector of first differences
+# N. B. diff(x) has one less element than x
+# sort() # Sort elements into order, but omitting NAs 
+# order() # x[order(x)] orders elements of x, with NAs last 
+# cumsum()
+# cumprod()
+# rev() # reverse the order of vector elements
+```
+
+The functions `mean()`, `median()`, `range()`, and a number of other functions, take the argument `na.rm=T`; i.e. remove NAs, then proceed with the calculation. By default, `sort()` omits any NAs. The function `order()` places NAs last. Hence:
+```{r}
+x <- c(1, 20, 2, NA, 22)
+order(x)
+x[order(x)]
+```
+
+### 3.2 Applying a function to all columns of a data frame
+
+The function `sapply()` takes as arguments the data frame, and the function that is to be applied. The following applies the function `is.factor()` to all columns of the supplied data frame `Cars93`.
+```{r}
+sapply(Cars93, is.factor)
+```
+We can use such `TRUE` and `FALSE` statements as a method of indexing. The code below determines which of the columns is a factor and then uses that to subset the dataset passed *not*-factors to `range`. 
+```{r eval = T}
+index = sapply(Cars93, is.factor)
+sapply(Cars93[,!index], range)   # The first 3 columns are factors
+```
+
+Note the use of `!` to indicate *not* - you could examine its effect.
+```{r eval = F}
+index
+!index
+```
+
+The function `apply()` can be used to apply a function to rows or columns of data.frames or matrices. For example, the code below calculates the median values for each field (column) in the `mtcars` data:
+
+```{r}
+apply(mtcars, 2, median)
+```
+
+The second argument to `apply` is a `1` or ` `2` to indicate whether the function should be applied to each row or column, respectively. 
+
+And of course such functions can be used in conjunction with others. The code below passes a subset of `mtcars` to determine the mean values for the Mercedes models:
+```{r}
+index = grep("Merc", rownames(mtcars))
+apply(mtcars[index,], 2, mean)
+```
+
+### 3.3 Making tables
+The `table()` function makes a table of counts of variables that have the same length: 
+```{r eval = F}
+table(Cars93$Manufacturer, Cars93$Cylinders)
+```
+
+
+## Summary
+The aim of this session was to make you familiar with the R environment if you have not used R before. If you have, but not for a while, then hopefully this has acted as a refresher. 
+
+The book by Brundson and and Comber (2018) provides a comprehensive introduction to R, data types and spatial data: see https://uk.sagepub.com/an-introduction-to-r-for-spatial-analysis-and-mapping/book25826. The first 3 chapters of this book cover most of the things you will need to know. 
+
+Other good online *get started in R* guides include:
+
+- The Owen guide: https://cran.r-project.org/doc/contrib/Owen-TheRGuide.pdf
+- An Introduction to R - https://cran.r-project.org/doc/contrib/Lam-IntroductionToR_LHL.pdf
+- R for beginners https://cran.r-project.org/doc/contrib/Paradis-rdebuts_en.pdf
+
+## References
+
+Brunsdon C and Comber L, 2018. *An Introduction to Spatial Analysis and Mapping in R (2e)*. Sage, London.
