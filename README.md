@@ -15,28 +15,26 @@ Technical Requirements: laptop with R v3.5.3 or later installed. NB we strongly 
 ## Data Requirements
 All data and R code will be provided in the workshop. Attendees are encouraged to bring their own data for analysis during the workshop (last day).
 
-## Workshop Programme
+## Workshop Programme (with links to materials)
 
 Day 0: Before the Workshop! 
 
-+ Session 0: R Basics. You should go through this before the workshop. It covers stuff you should already know prior to the workshop.
++ Session 0: R Basics. You should go through this before the workshop. It covers stuff you should already know prior to the workshop - http://rpubs.com/lexcomber/INIA_Session0
 
-Day 1: Data and Spatial Data
-
-+ Setup: making sure everyone has R, is able to install packages etc and is good to go! 
-+ Session 1: Reading, writing and creating Data and Spatial Data in R (Lex)
-+ Session 2: Exploratory Data Analysis (EDA) and Mapping (Lex)
+Day 1: Data and Spatial Data: Setup: making sure everyone has R, is able to install packages etc and is good to go! 
++ Session 1: Reading, writing and creating Data and Spatial Data in R (Lex) - http://rpubs.com/lexcomber/INIA_Session1
++ Session 2: Exploratory Data Analysis (EDA) and Mapping (Lex) - http://rpubs.com/lexcomber/INIA_Session2
 
 Day 2: Spatial Data Analysis
 
-+ Session 3: Exploratory Spatial Data Analysis (ESDA) (Lex)
-+ Session 4: Geostatistical Analysis (Harry)
-+ Session 5: Spatial Point Process Analysis (Harry)
++ Session 3: Exploratory Spatial Data Analysis (ESDA) (Lex) - http://rpubs.com/lexcomber/INIA_Session3
++ Session 4: Geostatistical Analysis (Harry) - http://rpubs.com/lexcomber/INIA_Session4
++ Session 5: Spatial Point Process Analysis (Harry) - http://rpubs.com/lexcomber/INIA_Session5
 
 Day 3: Spatial Regression Models
 
-+ Session 6: Regression with spatial autocorrelation effects (Harry)
-+ Session 7: Regression and spatial heterogeneity with Geographically Weighted Regression (GWR) (Harry) 
++ Session 6: Regression with spatial autocorrelation effects (Harry) - http://rpubs.com/lexcomber/INIA_Session6
++ Session 7: Regression and spatial heterogeneity with Geographically Weighted Regression (GWR) (Harry) - http://rpubs.com/lexcomber/INIA_Session7
 + Open session with attendee data
 
 ## Biographies
